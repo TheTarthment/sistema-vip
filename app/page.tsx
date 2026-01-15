@@ -74,6 +74,7 @@ export default function Home() {
       servicio: form.servicio
     }]).select();
 
+
     if (error) {
       alert("Error: " + error.message);
     } else {
@@ -123,7 +124,7 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <div className="bg-purple-600 p-2 rounded-lg"><Scissors className="w-6 h-6 text-white" /></div>
             <div>
-              <h1 className="text-xl font-bold text-white">VIP Salon</h1>
+              <h1 className="text-xl font-bold text-white">Carolina Nails Studio</h1>
               <p className="text-xs text-gray-400">Reserva tu hora</p>
             </div>
           </div>
