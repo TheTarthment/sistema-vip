@@ -4,12 +4,23 @@ import { supabase } from '@/lib/supabase';
 import { Calendar, User, Scissors, Trash2, Phone, CheckCircle, Clock, Mail, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+// --- CONFIGURACIÓN DE HORARIOS ---
+// Aquí defines las horas en que abre y cierra (Formato 24hrs)
+const HORARIOS_BASE = [
+  "09:00", "10:00", "11:00", "12:00", "13:00", 
+  "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"
+];
+
 export default function Home() {
   const router = useRouter();
   const [servicios, setServicios] = useState<any[]>([]);
   const [misCitas, setMisCitas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // Nuevo estado para las horas disponibles dinámicas
+  const [horasDisponibles, setHorasDisponibles] = useState<string[]>(HORARIOS_BASE);
+  const [cargandoHoras, setCargandoHoras] = useState(false);
+
   const [form, setForm] = useState({
     cliente: '',
     email: '',
@@ -20,17 +31,17 @@ export default function Home() {
     precio: 0
   });
 
-  // Cargar servicios y citas del usuario al inicio
+  // 1. Cargar datos iniciales
   useEffect(() => {
     const fetchData = async () => {
-      // 1. Cargar servicios desde DB
+      // Servicios
       const { data: servs } = await supabase.from('servicios').select('*').eq('activo', true);
       if (servs && servs.length > 0) {
         setServicios(servs);
         setForm(f => ({ ...f, servicio: servs[0].nombre, precio: servs[0].precio }));
       }
 
-      // 2. Cargar MIS citas (Leyendo del localStorage)
+      // Mis Citas
       const misCitasIds = JSON.parse(localStorage.getItem('mis_reservas_ids') || '[]');
       if (misCitasIds.length > 0) {
         const { data: citas } = await supabase
@@ -45,6 +56,51 @@ export default function Home() {
     fetchData();
   }, []);
 
+  // 2. DETECTOR DE FECHA: Calcular horas libres cuando cambia la fecha
+  useEffect(() => {
+    const calcularDisponibilidad = async () => {
+      if (!form.fecha) return;
+      setCargandoHoras(true);
+      setForm(f => ({ ...f, hora: '' })); // Resetear hora seleccionada
+
+      // Buscamos TODAS las citas de ese día
+      const { data: citasDelDia } = await supabase
+        .from('citas')
+        .select('hora')
+        .eq('fecha', form.fecha);
+
+      if (!citasDelDia) {
+        setHorasDisponibles(HORARIOS_BASE);
+        setCargandoHoras(false);
+        return;
+      }
+
+      // Lógica de Bloqueo (2 HORAS DE DURACIÓN)
+      const horasOcupadas = new Set();
+
+      citasDelDia.forEach((cita) => {
+        // La cita viene como "10:00:00", sacamos solo la hora "10"
+        const horaInicio = parseInt(cita.hora.split(':')[0]);
+        
+        // Bloqueamos la hora de inicio (ej: 10:00)
+        horasOcupadas.add(horaInicio);
+        // Bloqueamos la hora siguiente (ej: 11:00) -> Aquí está el lapso de 2 horas
+        horasOcupadas.add(horaInicio + 1);
+      });
+
+      // Filtramos la lista base
+      const libres = HORARIOS_BASE.filter((horaStr) => {
+        const horaNum = parseInt(horaStr.split(':')[0]);
+        return !horasOcupadas.has(horaNum);
+      });
+
+      setHorasDisponibles(libres);
+      setCargandoHoras(false);
+    };
+
+    calcularDisponibilidad();
+  }, [form.fecha]); // Se ejecuta cada vez que cambia la fecha
+
   const actualizarPrecio = (nombreServicio: string) => {
     const serv = servicios.find(s => s.nombre === nombreServicio);
     setForm({ ...form, servicio: nombreServicio, precio: serv ? serv.precio : 0 });
@@ -53,16 +109,6 @@ export default function Home() {
   const guardarReserva = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fecha || !form.hora) return alert("Falta fecha u hora");
-
-    // Verificar choque
-    const { data: ocupado } = await supabase
-      .from('citas')
-      .select('*')
-      .eq('fecha', form.fecha)
-      .eq('hora', form.hora + ':00')
-      .single();
-
-    if (ocupado) return alert("⚠️ ¡Horario ocupado! Intenta otro.");
 
     // Guardar en DB
     const { data, error } = await supabase.from('citas').insert([{
@@ -74,45 +120,55 @@ export default function Home() {
       servicio: form.servicio
     }]).select();
 
-
     if (error) {
-      alert("Error: " + error.message);
+      alert("Error (Puede que alguien haya ganado la hora): " + error.message);
     } else {
       const nuevaCita = data[0];
       
-      // 1. Guardar ID en localStorage (Para que el usuario la vea después)
+      // LocalStorage
       const idsGuardados = JSON.parse(localStorage.getItem('mis_reservas_ids') || '[]');
       idsGuardados.push(nuevaCita.id);
       localStorage.setItem('mis_reservas_ids', JSON.stringify(idsGuardados));
 
-      // 2. Enviar Correo de Confirmación
+      // Correo
       await fetch('/api/send', {
         method: 'POST',
         body: JSON.stringify({ tipo: 'confirmacion', ...nuevaCita })
       });
 
-      alert("✅ Cita Confirmada. Revisa tu correo.");
-      setForm({ ...form, cliente: '', email: '', telefono: '' });
+      alert("✅ Reserva Exitosa. Bloque de 2 horas reservado.");
+      setForm({ ...form, cliente: '', email: '', telefono: '', hora: '' });
       
-      // Recargar lista visual
+      // Actualizar visualmente (quitamos la hora recién usada de la lista)
+      const horaUsada = parseInt(nuevaCita.hora.split(':')[0]);
+      setHorasDisponibles(prev => prev.filter(h => {
+        const hNum = parseInt(h.split(':')[0]);
+        return hNum !== horaUsada && hNum !== horaUsada + 1;
+      }));
+
       setMisCitas([...misCitas, nuevaCita]);
     }
   };
 
   const cancelarCita = async (cita: any) => {
-    if (!confirm("¿Cancelar reserva?")) return;
+    if (!confirm("¿Cancelar reserva? Se liberará el horario.")) return;
 
-    // 1. Notificar cancelación
     await fetch('/api/send', {
       method: 'POST',
       body: JSON.stringify({ tipo: 'cancelacion', ...cita })
     });
 
-    // 2. Borrar de DB
     await supabase.from('citas').delete().eq('id', cita.id);
 
-    alert("Cita cancelada.");
+    alert("Cita cancelada y horario liberado.");
     setMisCitas(misCitas.filter(c => c.id !== cita.id));
+    
+    // Truco: Forzamos recarga de horas si es la misma fecha seleccionada
+    if (form.fecha === cita.fecha) {
+      const tempFecha = form.fecha;
+      setForm(f => ({...f, fecha: ''}));
+      setTimeout(() => setForm(f => ({...f, fecha: tempFecha})), 10);
+    }
   };
 
   return (
@@ -155,7 +211,7 @@ export default function Home() {
 
               <div className="relative">
                 <Mail className="absolute left-3 top-3 w-4 h-4 text-gray-500" />
-                <input type="email" placeholder="tu@correo.com (Para notificarte)" required className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 pl-9 pr-4 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                <input type="email" placeholder="tu@correo.com" required className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 pl-9 pr-4 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
                   value={form.email} onChange={e => setForm({...form, email: e.target.value})} />
               </div>
 
@@ -165,12 +221,36 @@ export default function Home() {
                   value={form.telefono} onChange={e => setForm({...form, telefono: e.target.value})} />
               </div>
 
+              {/* SELECCIÓN DE FECHA Y HORA INTELIGENTE */}
               <div className="grid grid-cols-2 gap-3">
-                <input type="date" required className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                  value={form.fecha} onChange={e => setForm({...form, fecha: e.target.value})} />
-                <input type="time" required className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
-                  value={form.hora} onChange={e => setForm({...form, hora: e.target.value})} />
+                <div>
+                  <label className="text-xs text-gray-500 ml-1 mb-1 block">Fecha</label>
+                  <input type="date" required className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    value={form.fecha} onChange={e => setForm({...form, fecha: e.target.value})} />
+                </div>
+                
+                <div>
+                  <label className="text-xs text-gray-500 ml-1 mb-1 block">Hora</label>
+                  <select 
+                    required 
+                    disabled={!form.fecha || cargandoHoras}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-sm focus:ring-2 focus:ring-purple-500 outline-none disabled:opacity-50"
+                    value={form.hora} 
+                    onChange={e => setForm({...form, hora: e.target.value})}
+                  >
+                    <option value="">{cargandoHoras ? 'Cargando...' : 'Selecciona'}</option>
+                    {horasDisponibles.map(hora => (
+                      <option key={hora} value={hora}>{hora}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              {horasDisponibles.length === 0 && form.fecha && !cargandoHoras && (
+                <p className="text-xs text-red-400 text-center bg-red-900/20 p-2 rounded">
+                  ⛔ No quedan horas disponibles este día.
+                </p>
+              )}
 
               <div>
                 <label className="text-xs text-gray-500 ml-1">Servicio</label>
@@ -181,14 +261,15 @@ export default function Home() {
                 <p className="text-right text-purple-400 font-bold mt-1">${form.precio.toLocaleString()}</p>
               </div>
 
-              <button type="submit" className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-3 rounded-lg shadow-lg mt-2 transition-transform active:scale-95">
+              <button type="submit" disabled={cargandoHoras || horasDisponibles.length === 0}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-3 rounded-lg shadow-lg mt-2 transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
                 Confirmar y Agendar
               </button>
             </form>
           </div>
         </div>
 
-        {/* MIS RESERVAS (Solo ve las propias) */}
+        {/* MIS RESERVAS */}
         <div className="lg:col-span-2">
           <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 min-h-[500px]">
             <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-blue-400">
