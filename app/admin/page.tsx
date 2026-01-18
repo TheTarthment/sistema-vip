@@ -11,7 +11,7 @@ export default function AdminPage() {
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
-  const PASSWORD_SECRETA = "admin123"; // O tu clave personalizada
+  const PASSWORD_SECRETA = "admin123"; // Cambia esto si deseas otra clave
 
   const login = () => {
     if (pass === PASSWORD_SECRETA) setAuth(true);
@@ -26,7 +26,7 @@ export default function AdminPage() {
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- LÓGICA DE FILTRADO (LO MÁS IMPORTANTE) ---
+  // --- LÓGICA DE FILTRADO ---
   const ahora = new Date();
   
   // Citas Activas: Fecha/Hora es mayor a ahora
@@ -41,7 +41,7 @@ export default function AdminPage() {
     return fechaCita < ahora && c.servicio !== 'BLOQUEADO';
   });
 
-  // --- FUNCIONES WHATSAPP Y EXCEL ---
+  // --- FUNCIONES WHATSAPP (CORREGIDA) Y EXCEL ---
   
   const terminarCitaYAgradecer = (cita: any) => {
     if(!cita.telefono) return alert("El cliente no dejó teléfono");
@@ -51,10 +51,18 @@ export default function AdminPage() {
     if(fono.length === 8) fono = '569' + fono; // Si puso 912345678
     if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
 
-    // 2. Mensaje con emojis
-    const mensaje = `¡Hola ${cita.cliente}! 💖✨\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio 💅.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. 🥰`;
+    // 2. Definimos los emojis con código seguro (Unicode) para evitar errores
+    const emojis = {
+      corazon: '\uD83D\uDC96', // 💖
+      brillos: '\u2728',       // ✨
+      unias: '\uD83D\uDC85',   // 💅
+      feliz: '\uD83E\uDD70'    // 🥰
+    };
+
+    // 3. Armamos el mensaje
+    const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
     
-    // 3. Abrir WhatsApp Web o App
+    // 4. Abrir WhatsApp
     const url = `https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`;
     window.open(url, '_blank');
   };
@@ -135,8 +143,7 @@ export default function AdminPage() {
                   <div className="flex items-center gap-4 min-w-[150px]">
                     <div className="bg-gray-800 px-4 py-3 rounded-lg text-center border border-gray-700">
                       <span className="block text-2xl font-bold text-white leading-none">{c.hora.slice(0,5)}</span>
-                      <span className="text-xs text-purple-400 font-bold mt-1">HOY</span> 
-                      {/* Nota: Aquí podrías mejorar la lógica para mostrar la fecha real si no es hoy */}
+                      <span className="text-xs text-purple-400 font-bold mt-1">PENDIENTE</span> 
                     </div>
                     <div>
                       <p className="text-sm text-gray-400 mb-1">{c.fecha}</p>
