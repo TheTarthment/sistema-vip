@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { Calendar, User, Scissors, Trash2, Phone, CheckCircle, Clock, Mail, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Horarios en los que ATENDEMOS (El último turno debe permitir 2 horas de trabajo)
+// HORARIOS DE ATENCIÓN (Formato 24h)
 const HORARIOS_BASE = [
   "09:00", "10:00", "11:00", "12:00", "13:00", 
   "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"
@@ -16,6 +16,7 @@ export default function Home() {
   const [misCitas, setMisCitas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // Estado para la disponibilidad inteligente
   const [horasDisponibles, setHorasDisponibles] = useState<string[]>(HORARIOS_BASE);
   const [cargandoHoras, setCargandoHoras] = useState(false);
 
@@ -29,16 +30,17 @@ export default function Home() {
     precio: 0
   });
 
+  // 1. Cargar Datos Iniciales (Servicios y Citas guardadas en el celular)
   useEffect(() => {
     const fetchData = async () => {
-      // 1. Cargar servicios
+      // Servicios activos
       const { data: servs } = await supabase.from('servicios').select('*').eq('activo', true);
       if (servs && servs.length > 0) {
         setServicios(servs);
         setForm(f => ({ ...f, servicio: servs[0].nombre, precio: servs[0].precio }));
       }
 
-      // 2. Cargar Mis Citas
+      // Mis Citas (localStorage)
       const misCitasIds = JSON.parse(localStorage.getItem('mis_reservas_ids') || '[]');
       if (misCitasIds.length > 0) {
         const { data: citas } = await supabase.from('citas').select('*').in('id', misCitasIds).order('fecha').order('hora');
@@ -49,14 +51,14 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // --- LÓGICA INTELIGENTE DE DISPONIBILIDAD ---
+  // 2. DETECTOR DE DISPONIBILIDAD (Calcula qué horas mostrar)
   useEffect(() => {
     const calcularDisponibilidad = async () => {
       if (!form.fecha) return;
       setCargandoHoras(true);
-      setForm(f => ({ ...f, hora: '' })); 
+      setForm(f => ({ ...f, hora: '' })); // Resetear selección
 
-      // Buscar citas del día seleccionado
+      // Consultar citas del día a la Base de Datos
       const { data: citasDelDia } = await supabase
         .from('citas')
         .select('hora')
@@ -68,25 +70,22 @@ export default function Home() {
         return;
       }
 
-      // 1. Mapear qué horas específicas están OCUPADAS en el reloj
+      // A) Marcar horas ocupadas en el reloj real
       const horasOcupadasEnElReloj = new Set<number>();
-
       citasDelDia.forEach((cita) => {
         const horaInicio = parseInt(cita.hora.split(':')[0]); // Ej: 10
-        // Una cita a las 10 ocupa las 10:00 y las 11:00
-        horasOcupadasEnElReloj.add(horaInicio);
-        horasOcupadasEnElReloj.add(horaInicio + 1);
+        horasOcupadasEnElReloj.add(horaInicio);     // 10:00 Ocupada
+        horasOcupadasEnElReloj.add(horaInicio + 1); // 11:00 Ocupada (2 horas de trabajo)
       });
 
-      // 2. Filtrar qué horarios puede elegir el cliente
-      // REGLA: Para elegir la hora X, la hora X y la hora X+1 deben estar libres.
+      // B) Filtrar la lista para el usuario
+      // REGLA: Para mostrar la hora X, deben estar libres X y X+1
       const libres = HORARIOS_BASE.filter((horaStr) => {
         const horaCandidata = parseInt(horaStr.split(':')[0]);
         
         const inicioLibre = !horasOcupadasEnElReloj.has(horaCandidata);
         const finLibre = !horasOcupadasEnElReloj.has(horaCandidata + 1);
 
-        // Solo mostramos la hora si AMBAS condiciones se cumplen
         return inicioLibre && finLibre;
       });
 
@@ -95,21 +94,23 @@ export default function Home() {
     };
 
     calcularDisponibilidad();
-  }, [form.fecha]); 
+  }, [form.fecha]);
 
   const actualizarPrecio = (nombreServicio: string) => {
     const serv = servicios.find(s => s.nombre === nombreServicio);
     setForm({ ...form, servicio: nombreServicio, precio: serv ? serv.precio : 0 });
   };
 
+  // 3. GUARDAR RESERVA (Con actualización visual inmediata)
   const guardarReserva = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fecha || !form.hora) return alert("Falta fecha u hora");
 
-    // Doble verificación antes de guardar
+    // Seguridad: Verificar DB una última vez
     const { data: ocupado } = await supabase.from('citas').select('*').eq('fecha', form.fecha).eq('hora', form.hora + ':00').single();
     if (ocupado) return alert("⚠️ ¡Alguien te ganó la hora! Intenta otra.");
 
+    // Insertar
     const { data, error } = await supabase.from('citas').insert([{
       cliente: form.cliente,
       email: form.email,
@@ -123,24 +124,34 @@ export default function Home() {
       alert("Error: " + error.message);
     } else {
       const nuevaCita = data[0];
+      
+      // Guardar ID localmente
       const idsGuardados = JSON.parse(localStorage.getItem('mis_reservas_ids') || '[]');
       idsGuardados.push(nuevaCita.id);
       localStorage.setItem('mis_reservas_ids', JSON.stringify(idsGuardados));
 
       // Enviar correo
-      await fetch('/api/send', {
+      fetch('/api/send', {
         method: 'POST',
         body: JSON.stringify({ tipo: 'confirmacion', ...nuevaCita })
       });
 
-      alert("✅ Reserva Exitosa.");
-      setForm({ ...form, cliente: '', email: '', telefono: '', hora: '' });
+      alert("✅ Reserva Exitosa. Horario de 2 horas reservado.");
       
-      // Actualización rápida visual (Truco para recargar disponibildad)
-      const tempFecha = form.fecha;
-      setForm(f => ({...f, fecha: ''}));
-      setTimeout(() => setForm(f => ({...f, fecha: tempFecha})), 50);
+      // --- ACTUALIZACIÓN VISUAL INSTANTÁNEA ---
+      // Borramos de la lista la hora actual, la siguiente y la ANTERIOR
+      const horaReservada = parseInt(form.hora.split(':')[0]); 
+      
+      setHorasDisponibles(prev => prev.filter(horaStr => {
+        const h = parseInt(horaStr.split(':')[0]);
+        // h !== horaReservada        -> Borra la hora elegida (ej: 10)
+        // h !== (horaReservada + 1)  -> Borra la siguiente (ej: 11)
+        // h !== (horaReservada - 1)  -> Borra la ANTERIOR (ej: 9) para evitar choques
+        return h !== horaReservada && h !== (horaReservada + 1) && h !== (horaReservada - 1);
+      }));
 
+      // Limpiar form
+      setForm({ ...form, cliente: '', email: '', telefono: '', hora: '' });
       setMisCitas([...misCitas, nuevaCita]);
     }
   };
@@ -148,23 +159,26 @@ export default function Home() {
   const cancelarCita = async (cita: any) => {
     if (!confirm("¿Cancelar reserva? Se liberará el horario.")) return;
 
+    // Actualizar UI
+    setMisCitas(misCitas.filter(c => c.id !== cita.id));
+
+    // Forzar recarga de horas (parpadeo de fecha)
+    if (form.fecha === cita.fecha) {
+      const fechaActual = form.fecha;
+      setForm(f => ({ ...f, fecha: '' })); 
+      setTimeout(() => setForm(f => ({ ...f, fecha: fechaActual })), 50);
+    }
+
+    // DB y Correo
     await fetch('/api/send', { method: 'POST', body: JSON.stringify({ tipo: 'cancelacion', ...cita }) });
     await supabase.from('citas').delete().eq('id', cita.id);
-
     alert("Cita cancelada.");
-    setMisCitas(misCitas.filter(c => c.id !== cita.id));
-    
-    // Recargar disponibilidad
-    if (form.fecha === cita.fecha) {
-      const tempFecha = form.fecha;
-      setForm(f => ({...f, fecha: ''}));
-      setTimeout(() => setForm(f => ({...f, fecha: tempFecha})), 50);
-    }
   };
 
   return (
     <div className="min-h-screen bg-black text-gray-100 font-sans">
       
+      {/* HEADER */}
       <header className="border-b border-gray-800 bg-gray-900/50 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w-6xl mx-auto p-4 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -226,7 +240,7 @@ export default function Home() {
               </div>
 
               {horasDisponibles.length === 0 && form.fecha && !cargandoHoras && (
-                <p className="text-xs text-red-400 text-center bg-red-900/20 p-2 rounded">⛔ Día completo ocupado.</p>
+                <p className="text-xs text-red-400 text-center bg-red-900/20 p-2 rounded">⛔ Sin disponibilidad.</p>
               )}
 
               <div>
@@ -246,7 +260,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* LISTA DE CITAS */}
+        {/* LISTA MIS CITAS */}
         <div className="lg:col-span-2">
           <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 min-h-[500px]">
             <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-blue-400">
@@ -254,4 +268,33 @@ export default function Home() {
             </h2>
             {loading ? <p className="text-center text-gray-500 animate-pulse">Cargando...</p> : 
              misCitas.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-gray-600 border-2 border-dashed border-gray-800 rounded-xl"></div>
+              <div className="flex flex-col items-center justify-center h-48 text-gray-600 border-2 border-dashed border-gray-800 rounded-xl">
+                <Clock className="w-10 h-10 mb-2 opacity-20" />
+                <p>No tienes citas agendadas.</p>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {misCitas.map((cita) => (
+                  <div key={cita.id} className="relative bg-gray-800 border border-gray-700 p-4 rounded-xl hover:border-purple-500/50 transition-all">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="bg-gray-900 px-2 py-1 rounded text-xs font-mono text-purple-300 border border-purple-500/20">{cita.hora.slice(0,5)}</div>
+                      <span className="text-xs text-gray-400">{cita.fecha}</span>
+                    </div>
+                    <h3 className="font-bold text-white text-lg mb-1">{cita.servicio}</h3>
+                    <p className="text-xs text-gray-500">{cita.cliente}</p>
+                    <div className="mt-4 pt-3 border-t border-gray-700/50 flex justify-end">
+                      <button onClick={() => cancelarCita(cita)} className="text-red-400 hover:text-red-300 px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-1.5">
+                        <Trash2 className="w-3.5 h-3.5" /> Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+      </main>
+    </div>
+  );
+}

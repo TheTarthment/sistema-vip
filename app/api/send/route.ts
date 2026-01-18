@@ -6,31 +6,31 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { tipo, cliente, email, fecha, hora, servicio } = body;
 
-    // 1. Configurar el "Transportador" de Gmail
+    // Configuración del Transportador (Gmail)
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.GMAIL_USER, // Tu correo
-        pass: process.env.GMAIL_PASS, // La contraseña rara de aplicación
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_PASS,
       },
     });
 
     let asunto = '';
     let htmlContent = '';
 
-    // 2. Definir el mensaje según el tipo
+    // Diseños de Correo
     if (tipo === 'confirmacion') {
       asunto = `✅ Reserva Confirmada: ${servicio}`;
       htmlContent = `
         <div style="font-family: Arial, color: #333; padding: 20px;">
           <h2 style="color: #6d28d9;">¡Hola ${cliente}! 👋</h2>
-          <p>Tu cita ha sido agendada exitosamente.</p>
+          <p>Tu cita en <strong>Carolina Nails Studio</strong> ha sido agendada.</p>
           <hr/>
-          <p><strong>💇 Servicio:</strong> ${servicio}</p>
+          <p><strong>💅 Servicio:</strong> ${servicio}</p>
           <p><strong>📅 Fecha:</strong> ${fecha}</p>
           <p><strong>⏰ Hora:</strong> ${hora}</p>
           <br/>
-          <p style="font-size: 12px; color: #888;">Te esperamos en VIP Salon.</p>
+          <p style="font-size: 12px; color: #888;">Te esperamos.</p>
         </div>
       `;
     } else if (tipo === 'cancelacion') {
@@ -38,36 +38,35 @@ export async function POST(request: Request) {
       htmlContent = `
         <div style="font-family: Arial, color: #333; padding: 20px;">
           <h2 style="color: #e11d48;">Cita Cancelada</h2>
-          <p>Estimado/a ${cliente}, la cita del <strong>${fecha}</strong> a las <strong>${hora}</strong> ha sido eliminada del sistema.</p>
+          <p>Estimado/a ${cliente}, la cita del <strong>${fecha}</strong> a las <strong>${hora}</strong> ha sido eliminada.</p>
         </div>
       `;
     }
 
-    // 3. ENVIAR AL CLIENTE (Si puso correo)
+    // 1. Enviar al Cliente (Si hay email)
     if (email) {
       await transporter.sendMail({
-        from: `"Sistema VIP" <${process.env.GMAIL_USER}>`,
-        to: email, // ¡AHORA SÍ FUNCIONA CON CUALQUIER CORREO!
+        from: `"Carolina Nails Studio" <${process.env.GMAIL_USER}>`,
+        to: email,
         subject: asunto,
         html: htmlContent,
       });
     }
 
- // 4. ENVIAR COPIA A LA DUEÑA (Siempre)
-    // OJO: Aquí reemplaza 'tucorreo@gmail.com' por el CORREO REAL de la dueña
-    const correoDuena = 'martin20041206@gmail.com'; 
+    // 2. Enviar a la Dueña (Siempre)
+    // CAMBIA AQUÍ 'tucorreo@gmail.com' POR EL EMAIL REAL DE LA DUEÑA
+    const correoDuena = 'tucorreo@gmail.com'; 
 
     await transporter.sendMail({
       from: `"Sistema Notificaciones" <${process.env.GMAIL_USER}>`,
-      to: correoDuena, // Usamos la variable directa, así no falla
+      to: correoDuena,
       subject: `[ADMIN] ${asunto}`,
       html: `
         <div style="background: #f3f4f6; padding: 20px; border-left: 4px solid #6d28d9; font-family: sans-serif;">
-          <h3>🔔 Nueva Actividad en la Agenda</h3>
+          <h3>🔔 Actividad en Carolina Nails</h3>
           <p><strong>Cliente:</strong> ${cliente}</p>
-          <p><strong>Email Cliente:</strong> ${email}</p>
-          <p><strong>Detalle:</strong> ${servicio}</p>
-          <p><strong>Cuándo:</strong> ${fecha} a las ${hora}</p>
+          <p><strong>Email:</strong> ${email || 'No proporcionado'}</p>
+          <p><strong>Detalle:</strong> ${servicio} - ${fecha} ${hora}</p>
         </div>
       `,
     });
