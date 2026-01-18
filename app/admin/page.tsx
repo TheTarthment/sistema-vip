@@ -11,7 +11,6 @@ export default function AdminPage() {
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
-  // Contraseña de la dueña
   const PASSWORD_SECRETA = "admin123";
 
   const login = () => {
@@ -20,39 +19,47 @@ export default function AdminPage() {
   };
 
   const cargarDatos = async () => {
-    // Traemos TODAS las citas ordenadas
+    // Traemos TODAS las citas
     const { data } = await supabase.from('citas').select('*').order('fecha', { ascending: true }).order('hora');
     setCitas(data || []);
   };
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- LÓGICA DE FILTRADO (Activas vs Historial) ---
-  const ahora = new Date();
-  
-  // Citas Activas: Fecha/Hora es futura o presente
+  // --- LÓGICA DE FILTRADO ---
   const citasActivas = citas.filter(c => {
-    const fechaCita = new Date(`${c.fecha}T${c.hora}`);
-    return fechaCita >= ahora && c.servicio !== 'BLOQUEADO';
+    // Es activa si NO está completada y NO está bloqueada
+    return c.estado !== 'completada' && c.servicio !== 'BLOQUEADO';
   });
 
-  // Historial: Citas ya pasadas
   const citasHistorial = citas.filter(c => {
-    const fechaCita = new Date(`${c.fecha}T${c.hora}`);
-    return fechaCita < ahora && c.servicio !== 'BLOQUEADO';
+    // Es historial si YA está completada
+    return c.estado === 'completada' && c.servicio !== 'BLOQUEADO';
   });
 
-  // --- FUNCIONES: WHATSAPP (MENSAJE PERSONALIZADO) Y EXCEL ---
-  
-  const terminarCitaYAgradecer = (cita: any) => {
+  // --- FUNCIÓN TERMINAR (Mueve a Historial + Abre WhatsApp) ---
+  const terminarCitaYAgradecer = async (cita: any) => {
     if(!cita.telefono) return alert("El cliente no dejó teléfono");
+
+    // 1. Marcar como COMPLETADA en la base de datos
+    const { error } = await supabase
+      .from('citas')
+      .update({ estado: 'completada' })
+      .eq('id', cita.id);
+
+    if (error) {
+      alert("Error al guardar: " + error.message);
+      return;
+    }
+
+    // 2. Recargar datos para que desaparezca de la vista actual
+    await cargarDatos();
     
-    // 1. Limpiamos el número para asegurar formato +569...
+    // 3. Preparar WhatsApp
     let fono = cita.telefono.replace(/\D/g, ''); 
     if(fono.length === 8) fono = '569' + fono;
     if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
 
-    // 2. Emojis seguros (Unicode) para que se vean bien en cualquier celular
     const emojis = {
       corazon: '\uD83D\uDC96', // 💖
       brillos: '\u2728',       // ✨
@@ -60,16 +67,13 @@ export default function AdminPage() {
       feliz: '\uD83E\uDD70'    // 🥰
     };
 
-    // 3. El Mensaje EXACTO solicitado
     const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
     
-    // 4. Abrir WhatsApp Web/App
     const url = `https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`;
     window.open(url, '_blank');
   };
 
   const descargarReporte = () => {
-    // Generar archivo CSV para Excel
     const encabezados = ["ID,Cliente,Servicio,Fecha,Hora,Email,Telefono\n"];
     const filas = citasHistorial.map(c => 
       `${c.id},"${c.cliente}","${c.servicio}",${c.fecha},${c.hora},${c.email},${c.telefono}`
@@ -79,7 +83,6 @@ export default function AdminPage() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     
-    // Crear enlace de descarga invisible
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", `reporte_carolina_nails_${new Date().toISOString().slice(0,10)}.csv`);
@@ -93,7 +96,6 @@ export default function AdminPage() {
     cargarDatos();
   };
 
-  // --- VISTA DE LOGIN ---
   if (!auth) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
@@ -108,41 +110,28 @@ export default function AdminPage() {
     );
   }
 
-  // --- VISTA PRINCIPAL (DASHBOARD) ---
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
       <div className="max-w-5xl mx-auto">
         
-        {/* HEADER Y PESTAÑAS */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-gray-900/50 p-4 rounded-xl border border-gray-800 backdrop-blur-md sticky top-0 z-50">
           <h1 className="text-2xl font-bold text-purple-400 flex items-center gap-2">
             <Lock className="w-6 h-6" /> Administración
           </h1>
           <div className="flex gap-3 mt-4 md:mt-0">
-            <button onClick={() => setVista('activas')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'activas' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}>
-              Agenda Activa
-            </button>
-            <button onClick={() => setVista('historial')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'historial' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}>
-              Historial y Reportes
-            </button>
-            <button onClick={() => setAuth(false)} className="text-red-400 hover:bg-red-900/20 px-3 py-2 rounded-lg">
-              <LogOut size={20}/>
-            </button>
+            <button onClick={() => setVista('activas')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'activas' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}>Agenda Activa</button>
+            <button onClick={() => setVista('historial')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'historial' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}>Historial y Reportes</button>
+            <button onClick={() => setAuth(false)} className="text-red-400 hover:bg-red-900/20 px-3 py-2 rounded-lg"><LogOut size={20}/></button>
           </div>
         </div>
 
-        {/* PESTAÑA 1: AGENDA ACTIVA (FUTURO) */}
+        {/* VISTA ACTIVAS */}
         {vista === 'activas' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold text-purple-300 flex items-center gap-2">
-              <Calendar className="w-5 h-5"/> Próximas Citas ({citasActivas.length})
-            </h2>
-            
+            <h2 className="text-xl font-bold text-purple-300 flex items-center gap-2"><Calendar className="w-5 h-5"/> Por Atender ({citasActivas.length})</h2>
             <div className="grid gap-4">
-              {citasActivas.length === 0 ? <p className="text-gray-500 italic">No hay citas pendientes.</p> : citasActivas.map(c => (
+              {citasActivas.length === 0 ? <p className="text-gray-500 italic">¡Todo listo! No hay clientes esperando.</p> : citasActivas.map(c => (
                 <div key={c.id} className="bg-gray-900 border border-gray-800 p-5 rounded-xl flex flex-col md:flex-row justify-between items-center gap-6 shadow-lg hover:border-purple-500/30 transition-all">
-                  
-                  {/* Bloque de Hora y Fecha */}
                   <div className="flex items-center gap-4 min-w-[150px]">
                     <div className="bg-gray-800 px-4 py-3 rounded-lg text-center border border-gray-700">
                       <span className="block text-2xl font-bold text-white leading-none">{c.hora.slice(0,5)}</span>
@@ -151,34 +140,18 @@ export default function AdminPage() {
                     <div>
                       <p className="text-sm text-gray-400 mb-1">{c.fecha}</p>
                       <h3 className="font-bold text-lg text-white">{c.cliente}</h3>
-                      <span className="inline-block bg-purple-900/30 text-purple-300 text-xs px-2 py-1 rounded border border-purple-500/20 mt-1">
-                        {c.servicio}
-                      </span>
+                      <span className="inline-block bg-purple-900/30 text-purple-300 text-xs px-2 py-1 rounded border border-purple-500/20 mt-1">{c.servicio}</span>
                     </div>
                   </div>
-
-                  {/* Datos de Contacto */}
                   <div className="flex flex-col gap-2 text-sm text-gray-400 mr-auto">
                     <span className="flex items-center gap-2"><Phone size={14} className="text-green-400"/> {c.telefono || 'Sin teléfono'}</span>
                     <span className="flex items-center gap-2"><Mail size={14} className="text-blue-400"/> {c.email || 'Sin email'}</span>
                   </div>
-
-                  {/* Botones de Acción */}
                   <div className="flex gap-3 w-full md:w-auto">
-                    <button 
-                      onClick={() => terminarCitaYAgradecer(c)}
-                      className="flex-1 md:flex-none bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-green-900/20"
-                    >
+                    <button onClick={() => terminarCitaYAgradecer(c)} className="flex-1 md:flex-none bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-green-900/20">
                       <MessageCircle size={18} /> Terminar y Agradecer
                     </button>
-                    
-                    <button 
-                      onClick={() => cancelarCita(c.id)}
-                      className="bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 px-3 py-2 rounded-lg transition-colors"
-                      title="Cancelar Cita"
-                    >
-                      <Trash2 size={18}/>
-                    </button>
+                    <button onClick={() => cancelarCita(c.id)} className="bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 px-3 py-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
                   </div>
                 </div>
               ))}
@@ -186,33 +159,22 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* PESTAÑA 2: HISTORIAL (PASADO) */}
+        {/* VISTA HISTORIAL */}
         {vista === 'historial' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="bg-blue-900/10 border border-blue-800 p-6 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-4">
               <div>
-                <h2 className="text-xl font-bold text-blue-300 flex items-center gap-2">
-                  <Clock className="w-5 h-5"/> Historial de Servicios
-                </h2>
-                <p className="text-sm text-blue-200/60 mt-1">Aquí están todas las citas pasadas.</p>
+                <h2 className="text-xl font-bold text-blue-300 flex items-center gap-2"><Clock className="w-5 h-5"/> Historial de Servicios</h2>
+                <p className="text-sm text-blue-200/60 mt-1">Trabajos finalizados.</p>
               </div>
-              <button 
-                onClick={descargarReporte}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 transition-all"
-              >
+              <button onClick={descargarReporte} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 transition-all">
                 <FileText size={20}/> Descargar Excel Completo
               </button>
             </div>
-
             <div className="bg-gray-900 rounded-xl overflow-hidden border border-gray-800">
               <table className="w-full text-sm text-left text-gray-400">
                 <thead className="text-xs text-gray-200 uppercase bg-gray-800">
-                  <tr>
-                    <th className="px-6 py-3">Fecha</th>
-                    <th className="px-6 py-3">Cliente</th>
-                    <th className="px-6 py-3">Servicio</th>
-                    <th className="px-6 py-3">Estado</th>
-                  </tr>
+                  <tr><th className="px-6 py-3">Fecha</th><th className="px-6 py-3">Cliente</th><th className="px-6 py-3">Servicio</th><th className="px-6 py-3">Estado</th></tr>
                 </thead>
                 <tbody>
                   {citasHistorial.map(c => (
@@ -220,16 +182,10 @@ export default function AdminPage() {
                       <td className="px-6 py-4">{c.fecha} {c.hora}</td>
                       <td className="px-6 py-4 font-medium text-white">{c.cliente}</td>
                       <td className="px-6 py-4">{c.servicio}</td>
-                      <td className="px-6 py-4">
-                        <span className="flex items-center gap-1 text-green-400 bg-green-900/20 px-2 py-1 rounded w-fit text-xs border border-green-900/50">
-                          <CheckCircle size={12}/> Completado
-                        </span>
-                      </td>
+                      <td className="px-6 py-4"><span className="flex items-center gap-1 text-green-400 bg-green-900/20 px-2 py-1 rounded w-fit text-xs border border-green-900/50"><CheckCircle size={12}/> Completado</span></td>
                     </tr>
                   ))}
-                  {citasHistorial.length === 0 && (
-                    <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-600">Aún no hay historial.</td></tr>
-                  )}
+                  {citasHistorial.length === 0 && <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-600">Aún no hay trabajos completados.</td></tr>}
                 </tbody>
               </table>
             </div>
