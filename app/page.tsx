@@ -33,18 +33,31 @@ export default function Home() {
   // 1. Cargar Datos Iniciales (Servicios y Citas guardadas en el celular)
   useEffect(() => {
     const fetchData = async () => {
-      // Servicios activos
+      // A) Servicios activos
       const { data: servs } = await supabase.from('servicios').select('*').eq('activo', true);
       if (servs && servs.length > 0) {
         setServicios(servs);
         setForm(f => ({ ...f, servicio: servs[0].nombre, precio: servs[0].precio }));
       }
 
-      // Mis Citas (localStorage)
+      // B) Mis Citas (FILTRADO: Solo mostrar futuras)
       const misCitasIds = JSON.parse(localStorage.getItem('mis_reservas_ids') || '[]');
       if (misCitasIds.length > 0) {
-        const { data: citas } = await supabase.from('citas').select('*').in('id', misCitasIds).order('fecha').order('hora');
-        setMisCitas(citas || []);
+        const { data: citas } = await supabase
+          .from('citas')
+          .select('*')
+          .in('id', misCitasIds)
+          .order('fecha').order('hora');
+
+        if (citas) {
+          const ahora = new Date();
+          // Filtramos: Solo dejamos pasar las citas cuya fecha/hora sea mayor a "ahora"
+          const citasFuturas = citas.filter(c => {
+             const fechaCita = new Date(`${c.fecha}T${c.hora}`);
+             return fechaCita >= ahora;
+          });
+          setMisCitas(citasFuturas);
+        }
       }
       setLoading(false);
     };
@@ -101,7 +114,7 @@ export default function Home() {
     setForm({ ...form, servicio: nombreServicio, precio: serv ? serv.precio : 0 });
   };
 
-  // 3. GUARDAR RESERVA (Con actualización visual inmediata)
+  // 3. GUARDAR RESERVA (Con actualización visual inmediata anti-choques)
   const guardarReserva = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fecha || !form.hora) return alert("Falta fecha u hora");
@@ -270,7 +283,7 @@ export default function Home() {
              misCitas.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 text-gray-600 border-2 border-dashed border-gray-800 rounded-xl">
                 <Clock className="w-10 h-10 mb-2 opacity-20" />
-                <p>No tienes citas agendadas.</p>
+                <p>No tienes citas pendientes.</p>
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
