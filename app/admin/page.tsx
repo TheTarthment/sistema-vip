@@ -11,7 +11,8 @@ export default function AdminPage() {
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
-  const PASSWORD_SECRETA = "admin123"; // Cambia esto si deseas otra clave
+  // Contraseña de la dueña
+  const PASSWORD_SECRETA = "admin123";
 
   const login = () => {
     if (pass === PASSWORD_SECRETA) setAuth(true);
@@ -19,39 +20,39 @@ export default function AdminPage() {
   };
 
   const cargarDatos = async () => {
-    // Traemos TODAS las citas
+    // Traemos TODAS las citas ordenadas
     const { data } = await supabase.from('citas').select('*').order('fecha', { ascending: true }).order('hora');
     setCitas(data || []);
   };
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- LÓGICA DE FILTRADO ---
+  // --- LÓGICA DE FILTRADO (Activas vs Historial) ---
   const ahora = new Date();
   
-  // Citas Activas: Fecha/Hora es mayor a ahora
+  // Citas Activas: Fecha/Hora es futura o presente
   const citasActivas = citas.filter(c => {
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     return fechaCita >= ahora && c.servicio !== 'BLOQUEADO';
   });
 
-  // Historial: Ya pasaron (incluye bloqueos pasados)
+  // Historial: Citas ya pasadas
   const citasHistorial = citas.filter(c => {
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     return fechaCita < ahora && c.servicio !== 'BLOQUEADO';
   });
 
-  // --- FUNCIONES WHATSAPP (CORREGIDA) Y EXCEL ---
+  // --- FUNCIONES: WHATSAPP (MENSAJE PERSONALIZADO) Y EXCEL ---
   
   const terminarCitaYAgradecer = (cita: any) => {
     if(!cita.telefono) return alert("El cliente no dejó teléfono");
     
-    // 1. Limpiamos el número (sacamos espacios o +56)
+    // 1. Limpiamos el número para asegurar formato +569...
     let fono = cita.telefono.replace(/\D/g, ''); 
-    if(fono.length === 8) fono = '569' + fono; // Si puso 912345678
+    if(fono.length === 8) fono = '569' + fono;
     if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
 
-    // 2. Definimos los emojis con código seguro (Unicode) para evitar errores
+    // 2. Emojis seguros (Unicode) para que se vean bien en cualquier celular
     const emojis = {
       corazon: '\uD83D\uDC96', // 💖
       brillos: '\u2728',       // ✨
@@ -59,16 +60,16 @@ export default function AdminPage() {
       feliz: '\uD83E\uDD70'    // 🥰
     };
 
-    // 3. Armamos el mensaje
+    // 3. El Mensaje EXACTO solicitado
     const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
     
-    // 4. Abrir WhatsApp
+    // 4. Abrir WhatsApp Web/App
     const url = `https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`;
     window.open(url, '_blank');
   };
 
   const descargarReporte = () => {
-    // Crear contenido CSV (Excel básico)
+    // Generar archivo CSV para Excel
     const encabezados = ["ID,Cliente,Servicio,Fecha,Hora,Email,Telefono\n"];
     const filas = citasHistorial.map(c => 
       `${c.id},"${c.cliente}","${c.servicio}",${c.fecha},${c.hora},${c.email},${c.telefono}`
@@ -78,7 +79,7 @@ export default function AdminPage() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     
-    // Crear link invisible para descargar
+    // Crear enlace de descarga invisible
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", `reporte_carolina_nails_${new Date().toISOString().slice(0,10)}.csv`);
@@ -92,6 +93,7 @@ export default function AdminPage() {
     cargarDatos();
   };
 
+  // --- VISTA DE LOGIN ---
   if (!auth) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
@@ -106,16 +108,17 @@ export default function AdminPage() {
     );
   }
 
+  // --- VISTA PRINCIPAL (DASHBOARD) ---
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
       <div className="max-w-5xl mx-auto">
-        {/* HEADER */}
+        
+        {/* HEADER Y PESTAÑAS */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-gray-900/50 p-4 rounded-xl border border-gray-800 backdrop-blur-md sticky top-0 z-50">
           <h1 className="text-2xl font-bold text-purple-400 flex items-center gap-2">
             <Lock className="w-6 h-6" /> Administración
           </h1>
           <div className="flex gap-3 mt-4 md:mt-0">
-             {/* PESTAÑAS */}
             <button onClick={() => setVista('activas')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'activas' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}>
               Agenda Activa
             </button>
@@ -128,7 +131,7 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* VISTA: AGENDA ACTIVA */}
+        {/* PESTAÑA 1: AGENDA ACTIVA (FUTURO) */}
         {vista === 'activas' && (
           <div className="space-y-4">
             <h2 className="text-xl font-bold text-purple-300 flex items-center gap-2">
@@ -139,7 +142,7 @@ export default function AdminPage() {
               {citasActivas.length === 0 ? <p className="text-gray-500 italic">No hay citas pendientes.</p> : citasActivas.map(c => (
                 <div key={c.id} className="bg-gray-900 border border-gray-800 p-5 rounded-xl flex flex-col md:flex-row justify-between items-center gap-6 shadow-lg hover:border-purple-500/30 transition-all">
                   
-                  {/* Info Hora */}
+                  {/* Bloque de Hora y Fecha */}
                   <div className="flex items-center gap-4 min-w-[150px]">
                     <div className="bg-gray-800 px-4 py-3 rounded-lg text-center border border-gray-700">
                       <span className="block text-2xl font-bold text-white leading-none">{c.hora.slice(0,5)}</span>
@@ -154,13 +157,13 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* Info Contacto */}
+                  {/* Datos de Contacto */}
                   <div className="flex flex-col gap-2 text-sm text-gray-400 mr-auto">
                     <span className="flex items-center gap-2"><Phone size={14} className="text-green-400"/> {c.telefono || 'Sin teléfono'}</span>
                     <span className="flex items-center gap-2"><Mail size={14} className="text-blue-400"/> {c.email || 'Sin email'}</span>
                   </div>
 
-                  {/* BOTONES DE ACCIÓN */}
+                  {/* Botones de Acción */}
                   <div className="flex gap-3 w-full md:w-auto">
                     <button 
                       onClick={() => terminarCitaYAgradecer(c)}
@@ -183,7 +186,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* VISTA: HISTORIAL */}
+        {/* PESTAÑA 2: HISTORIAL (PASADO) */}
         {vista === 'historial' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="bg-blue-900/10 border border-blue-800 p-6 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-4">
