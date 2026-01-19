@@ -13,13 +13,10 @@ export default function AdminPage() {
   const [citas, setCitas] = useState<any[]>([]);
   const [servicios, setServicios] = useState<any[]>([]);
   
-  // CONFIGURACIÓN EXACTA DE TU EXCEL ("Hoja 1")
-  // Gastos Fijos: Luz ($30.000)
+  // CONFIGURACIÓN EXACTA DE TU EXCEL
   const COSTO_FIJO_MENSUAL = 30000; 
 
-  // TUS SERVICIOS REALES (Precio Venta y Costo Insumo Aproximado según tus notas)
-  // Nota: En tu Excel, el costo base por cliente es ~$850 (suma de insumos).
-  // He ajustado los costos para reflejar el gasto de material extra (ej: Polygel gasta más).
+  // TUS SERVICIOS REALES (Respaldo para el botón de reinicio)
   const SERVICIOS_REALES = [
     { nombre: 'Esmaltado Permanente', precio: 14000, costo: 850 },
     { nombre: 'Permanente + Baño de Gel', precio: 20000, costo: 1200 },
@@ -34,7 +31,7 @@ export default function AdminPage() {
   // Formularios y Estado
   const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', precio: '', costo: '' });
   const [bloqueo, setBloqueo] = useState({ fecha: '', hora: '' });
-  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Ej: 2024-01
+  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Ej: 2026-01
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
@@ -55,11 +52,9 @@ export default function AdminPage() {
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
   // --- FUNCIÓN DE "REINICIO TOTAL DE SERVICIOS" ---
-  // Esto arregla el problema de "pérdidas" asegurando que todos los servicios tengan costo.
   const sincronizarServiciosReales = async () => {
-    if(!confirm("¿ESTÁS SEGURA? Esto borrará los servicios mal configurados y cargará la lista oficial de tu Excel con precios y costos correctos.")) return;
+    if(!confirm("¿ESTÁS SEGURA? Esto borrará los servicios mal configurados y cargará la lista oficial.")) return;
     
-    // 1. Borrar todo lo antiguo (para limpiar basura)
     const { data: actuales } = await supabase.from('servicios').select('id');
     if (actuales) {
         for (const s of actuales) {
@@ -67,7 +62,6 @@ export default function AdminPage() {
         }
     }
 
-    // 2. Insertar la lista REAL con Costos
     for (const s of SERVICIOS_REALES) {
       await supabase.from('servicios').insert([{ 
         nombre: s.nombre, 
@@ -77,15 +71,13 @@ export default function AdminPage() {
       }]);
     }
     
-    alert("✅ Servicios Sincronizados. Ahora tus finanzas cuadrarán.");
+    alert("✅ Servicios Sincronizados.");
     cargarDatos();
   };
 
   // --- HELPERS FINANCIEROS ---
   const getInfoServicio = (nombreServicio: string) => {
     const s = servicios.find(ser => ser.nombre === nombreServicio);
-    // Si por alguna razón el servicio de la cita no está en la lista actual,
-    // buscamos en la lista maestra de respaldo para no dar error.
     const respaldo = SERVICIOS_REALES.find(sr => sr.nombre === nombreServicio);
     
     if (s) return { precio: s.precio, costo: s.costo || 0 };
@@ -94,21 +86,29 @@ export default function AdminPage() {
     return { precio: 0, costo: 0 };
   };
 
-  // --- LÓGICA DE CÁLCULO (Igual a tu Excel) ---
+  // --- LÓGICA DE CÁLCULO Y LIMPIEZA ---
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
+
+    // --- [FILTRO DE LIMPIEZA NUEVO] ---
+    // Verificamos si el servicio de la cita existe en la lista ACTUAL de servicios.
+    // Si la cita tiene un servicio viejo (ej: "Prueba1") que ya borraste, se ignora.
+    const servicioEsValido = servicios.some(s => s.nombre === c.servicio);
+    if (!servicioEsValido) return false; 
+    // ----------------------------------
+
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     const ahora = new Date();
-    // Filtro: Completada O Pasada + Mes Correcto
+    // Filtro de fecha y estado
     return (c.estado === 'completada' || fechaCita < ahora) && c.fecha.startsWith(mesFiltro);
   });
 
-  // 1. Total Ingresos (Ventas)
+  // 1. Total Ingresos
   const totalIngresos = citasHistorial.reduce((sum, c) => {
     return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum;
   }, 0);
 
-  // 2. Total Costos Variables (Insumos)
+  // 2. Total Costos Variables
   const totalCostosVariables = citasHistorial.reduce((sum, c) => {
     return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum;
   }, 0);
@@ -120,7 +120,7 @@ export default function AdminPage() {
   const descargarReporteFusionado = () => {
     const wb = XLSX.utils.book_new();
 
-    // HOJA 1: RESUMEN (Igual a tu Hoja 1)
+    // HOJA 1: RESUMEN
     const datosResumen = [
       ["REPORTE FINANCIERO MENSUAL", mesFiltro],
       ["Empresa", "Carolina Nails Studio"],
@@ -133,7 +133,7 @@ export default function AdminPage() {
       ["", ""],
       ["GANANCIA LÍQUIDA", gananciaNeta],
       ["", ""],
-      ["Nota:", "El costo variable incluye insumos (lima, alcohol, etc) calculados por servicio."]
+      ["Nota:", "Este reporte excluye servicios antiguos o de prueba que no estén en la lista de precios actual."]
     ];
     
     const wsResumen = XLSX.utils.aoa_to_sheet(datosResumen);
@@ -193,7 +193,7 @@ export default function AdminPage() {
   };
   const cancelarCita = async (id: number) => { if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } };
 
-  // --- VISTA LOGIN (DISEÑO ORIGINAL) ---
+  // --- LOGIN ---
   if (!auth) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
@@ -231,7 +231,6 @@ export default function AdminPage() {
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <div className="flex justify-between items-center mb-4">
                  <h2 className="text-xl font-bold flex items-center gap-2 text-green-400"><DollarSign/> Servicios</h2>
-                 {/* BOTÓN CLAVE PARA ARREGLAR LOS DATOS */}
                  <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded flex items-center gap-1 animate-pulse" title="Arreglar precios y costos">
                     <RefreshCw size={12}/> REINICIAR DATOS
                  </button>
