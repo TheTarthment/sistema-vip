@@ -28,11 +28,9 @@ export default function AdminPage() {
   };
 
   const cargarDatos = async () => {
-    // 1. Cargar Citas
     const { data: citasData } = await supabase.from('citas').select('*').order('fecha', { ascending: true }).order('hora');
     setCitas(citasData || []);
 
-    // 2. Cargar Servicios
     const { data: servData } = await supabase.from('servicios').select('*').order('nombre');
     setServicios(servData || []);
   };
@@ -76,39 +74,28 @@ export default function AdminPage() {
     }
   };
 
-  // --- FILTROS DE VISTA INTELIGENTES (AQUÍ ESTÁ EL CAMBIO) ---
-  const ahora = new Date(); // Fecha y hora actual
+  // --- FILTROS DE VISTA ---
+  const ahora = new Date(); 
 
   const citasActivas = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
-    
-    // Crear fecha de la cita para comparar
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
-    
-    // Es activa SI: No está marcada como completada Y (es futura O es reciente)
     return c.estado !== 'completada' && fechaCita >= ahora;
   });
 
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
-
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
-    
-    // Es historial SI: Está completada O la fecha ya pasó
     return c.estado === 'completada' || fechaCita < ahora;
   });
 
-  // --- ACCIONES DE CITA ---
+  // --- ACCIONES ---
   const terminarCitaYAgradecer = async (cita: any) => {
     if(!cita.telefono) return alert("El cliente no dejó teléfono");
 
-    // 1. PRIMERO: Actualizamos la DB
     await supabase.from('citas').update({ estado: 'completada' }).eq('id', cita.id);
-    
-    // 2. Recargamos la pantalla
     await cargarDatos();
 
-    // 3. DESPUÉS: Abrimos WhatsApp
     let fono = cita.telefono.replace(/\D/g, ''); 
     if(fono.length === 8) fono = '569' + fono;
     if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
@@ -125,10 +112,19 @@ export default function AdminPage() {
     cargarDatos();
   };
 
+  // --- REPORTE EXCEL CORREGIDO (Separado por punto y coma) ---
   const descargarReporte = () => {
-    const encabezados = ["ID,Cliente,Servicio,Fecha,Hora,Email,Telefono\n"];
-    const filas = citasHistorial.map(c => `${c.id},"${c.cliente}","${c.servicio}",${c.fecha},${c.hora},${c.email},${c.telefono}`);
-    const blob = new Blob([encabezados + filas.join("\n")], { type: 'text/csv;charset=utf-8;' });
+    // 1. Usamos punto y coma (;) para que Excel separe las columnas
+    const encabezados = "ID;Cliente;Servicio;Fecha;Hora;Email;Telefono\n";
+    
+    const filas = citasHistorial.map(c => 
+      `${c.id};"${c.cliente}";"${c.servicio}";${c.fecha};${c.hora};${c.email};${c.telefono}`
+    );
+    
+    // 2. Agregamos \uFEFF al principio para que Excel reconozca tildes y emojis (UTF-8)
+    const csvContent = "\uFEFF" + encabezados + filas.join("\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = `reporte_carolina_nails_${new Date().toISOString().slice(0,10)}.csv`;
@@ -170,7 +166,6 @@ export default function AdminPage() {
           {/* COLUMNA IZQUIERDA: HERRAMIENTAS */}
           <div className="lg:col-span-4 space-y-8">
             
-            {/* 1. GESTIÓN DE SERVICIOS */}
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-400"><DollarSign/> Servicios</h2>
               <div className="flex gap-2 mb-6">
@@ -190,10 +185,8 @@ export default function AdminPage() {
               </ul>
             </div>
 
-            {/* 2. BLOQUEO DE HORAS */}
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-red-400"><Lock/> Bloquear Hora</h2>
-              <p className="text-xs text-gray-500 mb-4">Selecciona un horario para que nadie pueda reservar.</p>
               <div className="space-y-3">
                 <input type="date" className="w-full bg-gray-800 border border-gray-700 p-2 rounded outline-none text-sm" 
                   onChange={e=>setBloqueo({...bloqueo, fecha: e.target.value})}/>
@@ -215,7 +208,6 @@ export default function AdminPage() {
           <div className="lg:col-span-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl h-full flex flex-col">
               
-              {/* PESTAÑAS */}
               <div className="flex gap-4 border-b border-gray-800 pb-4 mb-4">
                 <button onClick={() => setVista('activas')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${vista === 'activas' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
                   Agenda Activa
@@ -225,7 +217,7 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* VISTA 1: AGENDA ACTIVA (SOLO FUTURAS/HOY) */}
+              {/* VISTA AGENDA ACTIVA */}
               {vista === 'activas' && (
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2 max-h-[800px]">
                   <h3 className="text-gray-400 text-sm flex items-center gap-2"><Calendar size={16}/> {citasActivas.length} Citas Pendientes</h3>
@@ -255,7 +247,7 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* VISTA 2: HISTORIAL (PASADAS Y COMPLETADAS) */}
+              {/* VISTA HISTORIAL */}
               {vista === 'historial' && (
                 <div className="flex-1 flex flex-col">
                   <div className="flex justify-between items-center mb-4">
