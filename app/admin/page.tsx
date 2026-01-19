@@ -76,18 +76,36 @@ export default function AdminPage() {
     }
   };
 
-  // --- FILTROS DE VISTA ---
-  const citasActivas = citas.filter(c => c.estado !== 'completada' && c.servicio !== 'BLOQUEADO');
-  const citasHistorial = citas.filter(c => c.estado === 'completada' && c.servicio !== 'BLOQUEADO');
+  // --- FILTROS DE VISTA INTELIGENTES (AQUÍ ESTÁ EL CAMBIO) ---
+  const ahora = new Date(); // Fecha y hora actual
+
+  const citasActivas = citas.filter(c => {
+    if (c.servicio === 'BLOQUEADO') return false;
+    
+    // Crear fecha de la cita para comparar
+    const fechaCita = new Date(`${c.fecha}T${c.hora}`);
+    
+    // Es activa SI: No está marcada como completada Y (es futura O es reciente)
+    return c.estado !== 'completada' && fechaCita >= ahora;
+  });
+
+  const citasHistorial = citas.filter(c => {
+    if (c.servicio === 'BLOQUEADO') return false;
+
+    const fechaCita = new Date(`${c.fecha}T${c.hora}`);
+    
+    // Es historial SI: Está completada O la fecha ya pasó
+    return c.estado === 'completada' || fechaCita < ahora;
+  });
 
   // --- ACCIONES DE CITA ---
   const terminarCitaYAgradecer = async (cita: any) => {
     if(!cita.telefono) return alert("El cliente no dejó teléfono");
 
-    // 1. PRIMERO: Actualizamos la DB (Se va al historial INMEDIATAMENTE)
+    // 1. PRIMERO: Actualizamos la DB
     await supabase.from('citas').update({ estado: 'completada' }).eq('id', cita.id);
     
-    // 2. Recargamos la pantalla (La cita desaparece de 'Activas')
+    // 2. Recargamos la pantalla
     await cargarDatos();
 
     // 3. DESPUÉS: Abrimos WhatsApp
@@ -149,7 +167,7 @@ export default function AdminPage() {
 
         <div className="grid lg:grid-cols-12 gap-8">
           
-          {/* COLUMNA IZQUIERDA: HERRAMIENTAS (Servicios y Bloqueos) */}
+          {/* COLUMNA IZQUIERDA: HERRAMIENTAS */}
           <div className="lg:col-span-4 space-y-8">
             
             {/* 1. GESTIÓN DE SERVICIOS */}
@@ -193,7 +211,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* COLUMNA DERECHA: AGENDA (Activas e Historial) */}
+          {/* COLUMNA DERECHA: AGENDA */}
           <div className="lg:col-span-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl h-full flex flex-col">
               
@@ -207,7 +225,7 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* VISTA 1: AGENDA ACTIVA */}
+              {/* VISTA 1: AGENDA ACTIVA (SOLO FUTURAS/HOY) */}
               {vista === 'activas' && (
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2 max-h-[800px]">
                   <h3 className="text-gray-400 text-sm flex items-center gap-2"><Calendar size={16}/> {citasActivas.length} Citas Pendientes</h3>
@@ -237,7 +255,7 @@ export default function AdminPage() {
                 </div>
               )}
 
-              {/* VISTA 2: HISTORIAL */}
+              {/* VISTA 2: HISTORIAL (PASADAS Y COMPLETADAS) */}
               {vista === 'historial' && (
                 <div className="flex-1 flex flex-col">
                   <div className="flex justify-between items-center mb-4">
@@ -253,14 +271,25 @@ export default function AdminPage() {
                         <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Servicio</th><th className="px-4 py-3">Estado</th></tr>
                       </thead>
                       <tbody>
-                        {citasHistorial.map(c => (
-                          <tr key={c.id} className="border-b border-gray-800 hover:bg-gray-800/50">
-                            <td className="px-4 py-3">{c.fecha} {c.hora}</td>
-                            <td className="px-4 py-3 font-medium text-white">{c.cliente}</td>
-                            <td className="px-4 py-3">{c.servicio}</td>
-                            <td className="px-4 py-3"><span className="text-green-400 bg-green-900/20 px-2 py-0.5 rounded text-xs border border-green-900/50">Completado</span></td>
-                          </tr>
-                        ))}
+                        {citasHistorial.map(c => {
+                           const esPasada = new Date(`${c.fecha}T${c.hora}`) < new Date();
+                           return (
+                            <tr key={c.id} className="border-b border-gray-800 hover:bg-gray-800/50">
+                              <td className="px-4 py-3">{c.fecha} {c.hora}</td>
+                              <td className="px-4 py-3 font-medium text-white">{c.cliente}</td>
+                              <td className="px-4 py-3">{c.servicio}</td>
+                              <td className="px-4 py-3">
+                                {c.estado === 'completada' ? (
+                                  <span className="text-green-400 bg-green-900/20 px-2 py-0.5 rounded text-xs border border-green-900/50">Completado</span>
+                                ) : esPasada ? (
+                                  <span className="text-gray-400 bg-gray-800 px-2 py-0.5 rounded text-xs border border-gray-600">Expirado</span>
+                                ) : (
+                                  <span className="text-yellow-400">?</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
