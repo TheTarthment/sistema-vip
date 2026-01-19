@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Trash2, Plus, Lock, DollarSign, LogOut, Calendar, Phone, MessageCircle, Download, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { Trash2, Plus, Lock, DollarSign, LogOut, Calendar, Phone, MessageCircle, Download, TrendingUp, TrendingDown, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 
@@ -16,7 +16,7 @@ export default function AdminPage() {
   // CONFIGURACIÓN EXACTA DE TU EXCEL
   const COSTO_FIJO_MENSUAL = 30000; 
 
-  // TUS SERVICIOS REALES (Respaldo para el botón de reinicio)
+  // TUS SERVICIOS REALES (Respaldo)
   const SERVICIOS_REALES = [
     { nombre: 'Esmaltado Permanente', precio: 14000, costo: 850 },
     { nombre: 'Permanente + Baño de Gel', precio: 20000, costo: 1200 },
@@ -28,10 +28,9 @@ export default function AdminPage() {
     { nombre: 'Retiro Acrílico', precio: 10000, costo: 500 }
   ];
 
-  // Formularios y Estado
   const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', precio: '', costo: '' });
   const [bloqueo, setBloqueo] = useState({ fecha: '', hora: '' });
-  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Ej: 2026-01
+  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7));
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
@@ -51,125 +50,84 @@ export default function AdminPage() {
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- FUNCIÓN DE "REINICIO TOTAL DE SERVICIOS" ---
+  // --- 1. REINICIAR SERVICIOS (Precios Correctos) ---
   const sincronizarServiciosReales = async () => {
-    if(!confirm("¿ESTÁS SEGURA? Esto borrará los servicios mal configurados y cargará la lista oficial.")) return;
-    
+    if(!confirm("¿Cargar la lista OFICIAL de servicios y precios del Excel?")) return;
     const { data: actuales } = await supabase.from('servicios').select('id');
-    if (actuales) {
-        for (const s of actuales) {
-            await supabase.from('servicios').delete().eq('id', s.id);
-        }
-    }
-
+    if (actuales) { for (const s of actuales) await supabase.from('servicios').delete().eq('id', s.id); }
     for (const s of SERVICIOS_REALES) {
-      await supabase.from('servicios').insert([{ 
-        nombre: s.nombre, 
-        precio: s.precio, 
-        costo: s.costo, 
-        activo: true 
-      }]);
+      await supabase.from('servicios').insert([{ nombre: s.nombre, precio: s.precio, costo: s.costo, activo: true }]);
     }
-    
-    alert("✅ Servicios Sincronizados.");
+    alert("✅ Servicios Configurados Correctamente.");
     cargarDatos();
   };
 
-  // --- HELPERS FINANCIEROS ---
+  // --- 2. VACIAR AGENDA (RESET TOTAL PARA ENTREGAR) ---
+  const vaciarAgendaCompleta = async () => {
+    if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero para dejar el sistema como nuevo (Caja en $0).\n\nÚsalo solo antes de entregar el sistema.")) return;
+    if(!confirm("¿Confirmas por segunda vez? Se borrará todo el historial.")) return;
+    
+    // Borramos todas las citas (donde el ID no sea 0, o sea, todas)
+    const { error } = await supabase.from('citas').delete().neq('id', 0);
+    
+    if(error) alert("Error: " + error.message);
+    else {
+      alert("✨ Sistema Limpio y Listo para Entregar. Caja en $0.");
+      cargarDatos();
+    }
+  };
+
+  // --- LÓGICA FINANCIERA ---
   const getInfoServicio = (nombreServicio: string) => {
     const s = servicios.find(ser => ser.nombre === nombreServicio);
     const respaldo = SERVICIOS_REALES.find(sr => sr.nombre === nombreServicio);
-    
     if (s) return { precio: s.precio, costo: s.costo || 0 };
     if (respaldo) return { precio: respaldo.precio, costo: respaldo.costo };
-    
     return { precio: 0, costo: 0 };
   };
 
-  // --- LÓGICA DE CÁLCULO Y LIMPIEZA ---
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
-
-    // --- [FILTRO DE LIMPIEZA NUEVO] ---
-    // Verificamos si el servicio de la cita existe en la lista ACTUAL de servicios.
-    // Si la cita tiene un servicio viejo (ej: "Prueba1") que ya borraste, se ignora.
     const servicioEsValido = servicios.some(s => s.nombre === c.servicio);
     if (!servicioEsValido) return false; 
-    // ----------------------------------
-
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     const ahora = new Date();
-    // Filtro de fecha y estado
     return (c.estado === 'completada' || fechaCita < ahora) && c.fecha.startsWith(mesFiltro);
   });
 
-  // 1. Total Ingresos
-  const totalIngresos = citasHistorial.reduce((sum, c) => {
-    return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum;
-  }, 0);
-
-  // 2. Total Costos Variables
-  const totalCostosVariables = citasHistorial.reduce((sum, c) => {
-    return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum;
-  }, 0);
-
-  // 3. Resultado Final
+  const totalIngresos = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum, 0);
+  const totalCostosVariables = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum, 0);
   const gananciaNeta = totalIngresos - COSTO_FIJO_MENSUAL - totalCostosVariables;
 
-  // --- EXCEL FUSIONADO ---
+  // --- EXCEL ---
   const descargarReporteFusionado = () => {
     const wb = XLSX.utils.book_new();
-
-    // HOJA 1: RESUMEN
     const datosResumen = [
-      ["REPORTE FINANCIERO MENSUAL", mesFiltro],
-      ["Empresa", "Carolina Nails Studio"],
-      ["", ""],
-      ["INGRESOS (Ventas)", totalIngresos],
-      ["", ""],
-      ["GASTOS FIJOS (Luz, Local)", COSTO_FIJO_MENSUAL],
-      ["GASTOS VARIABLES (Insumos)", totalCostosVariables],
-      ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
-      ["", ""],
-      ["GANANCIA LÍQUIDA", gananciaNeta],
-      ["", ""],
-      ["Nota:", "Este reporte excluye servicios antiguos o de prueba que no estén en la lista de precios actual."]
+      ["REPORTE FINANCIERO MENSUAL", mesFiltro], ["Carolina Nails Studio", ""], ["", ""],
+      ["INGRESOS", totalIngresos], ["", ""],
+      ["GASTOS FIJOS", COSTO_FIJO_MENSUAL], ["GASTOS VARIABLES", totalCostosVariables], ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
+      ["", ""], ["GANANCIA LÍQUIDA", gananciaNeta]
     ];
-    
     const wsResumen = XLSX.utils.aoa_to_sheet(datosResumen);
     XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General");
 
-    // HOJAS POR SERVICIO
     const serviciosUnicos = Array.from(new Set(citasHistorial.map(c => c.servicio)));
-    
     serviciosUnicos.forEach(servicio => {
       const citasServ = citasHistorial.filter(c => c.servicio === servicio);
       const info = getInfoServicio(servicio);
-      const gananciaUnit = info.precio - info.costo;
-
       const datosServicio = [
         ["Fecha", "Cliente", "Teléfono", "Venta", "Costo", "Ganancia", "Estado"],
         ...citasServ.map(c => [
-          c.fecha, c.cliente, c.telefono,
-          info.precio, info.costo, gananciaUnit,
-          c.estado === 'completada' ? "Pagado" : "Pendiente"
-        ]),
-        ["", "TOTALES:", "", 
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.precio : s, 0),
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.costo : s, 0),
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + gananciaUnit : s, 0),
-         ""
-        ]
+          c.fecha, c.cliente, c.telefono, info.precio, info.costo, info.precio - info.costo, c.estado === 'completada' ? "Pagado" : "Pendiente"
+        ])
       ];
       const wsServicio = XLSX.utils.aoa_to_sheet(datosServicio);
-      const nombreHoja = servicio.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30) || "Srv";
-      XLSX.utils.book_append_sheet(wb, wsServicio, nombreHoja);
+      XLSX.utils.book_append_sheet(wb, wsServicio, servicio.substring(0, 30));
     });
-
     XLSX.writeFile(wb, `Reporte_CarolinaNails_${mesFiltro}.xlsx`);
   };
 
-  // --- FUNCIONES GESTIÓN ---
+  // --- GESTIÓN ---
   const agregarServicio = async () => {
     if (!nuevoServicio.nombre || !nuevoServicio.precio || !nuevoServicio.costo) return alert("Faltan datos");
     await supabase.from('servicios').insert([{ nombre: nuevoServicio.nombre, precio: parseInt(nuevoServicio.precio), costo: parseInt(nuevoServicio.costo), activo: true }]);
@@ -199,16 +157,14 @@ export default function AdminPage() {
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
         <div className="bg-gray-900 p-8 rounded-xl border border-purple-500/30 w-full max-w-md text-center">
           <h1 className="text-2xl font-bold text-white mb-6">Acceso Carolina Nails</h1>
-          <input type="password" className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 border border-gray-700 outline-none focus:border-purple-500 transition-colors" 
-            placeholder="Contraseña" value={pass} onChange={e => setPass(e.target.value)} />
-          <button onClick={login} className="w-full bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-lg font-bold transition-all transform active:scale-95">Entrar</button>
+          <input type="password" className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 border border-gray-700 outline-none focus:border-purple-500" placeholder="Contraseña" value={pass} onChange={e => setPass(e.target.value)} />
+          <button onClick={login} className="w-full bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-lg font-bold">Entrar</button>
           <button onClick={() => router.push('/')} className="w-full mt-4 text-gray-500 text-sm hover:text-white">Volver al Inicio</button>
         </div>
       </div>
     );
   }
 
-  // --- INTERFAZ ADMIN ---
   const citasActivas = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
@@ -226,16 +182,20 @@ export default function AdminPage() {
 
         <div className="grid lg:grid-cols-12 gap-8">
           
-          {/* BARRA LATERAL */}
           <div className="lg:col-span-4 space-y-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
-              <div className="flex justify-between items-center mb-4">
-                 <h2 className="text-xl font-bold flex items-center gap-2 text-green-400"><DollarSign/> Servicios</h2>
-                 <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded flex items-center gap-1 animate-pulse" title="Arreglar precios y costos">
-                    <RefreshCw size={12}/> REINICIAR DATOS
-                 </button>
-              </div>
+              <h2 className="text-xl font-bold flex items-center gap-2 text-green-400 mb-4"><DollarSign/> Servicios</h2>
               
+              {/* ZONA DE RESET */}
+              <div className="grid grid-cols-2 gap-2 mb-6">
+                <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-900/40 hover:bg-blue-800 text-blue-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-blue-800" title="Recargar precios del Excel">
+                    <RefreshCw size={14}/> <span>Reiniciar Servicios</span>
+                </button>
+                <button onClick={vaciarAgendaCompleta} className="text-xs bg-red-900/40 hover:bg-red-800 text-red-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-red-800" title="Borrar todas las citas">
+                    <AlertTriangle size={14}/> <span>VACIAR AGENDA</span>
+                </button>
+              </div>
+
               <div className="space-y-3 bg-gray-800/50 p-3 rounded-lg border border-gray-700">
                 <input placeholder="Nombre Nuevo" className="w-full bg-gray-800 border border-gray-700 p-2 rounded text-sm" value={nuevoServicio.nombre} onChange={e=>setNuevoServicio({...nuevoServicio, nombre: e.target.value})}/>
                 <div className="flex gap-2">
@@ -274,7 +234,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* PANEL CENTRAL */}
           <div className="lg:col-span-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl h-full flex flex-col">
               <div className="flex gap-4 border-b border-gray-800 pb-4 mb-4">
@@ -304,7 +263,6 @@ export default function AdminPage() {
 
               {vista === 'historial' && (
                 <div className="flex-1 flex flex-col space-y-6">
-                  {/* TABLERO */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-green-900/10 border border-green-800/50 p-4 rounded-xl">
                       <p className="text-[10px] uppercase tracking-wider text-green-400 flex items-center gap-1 mb-1"><TrendingUp size={12}/> Ventas Totales</p>
@@ -320,7 +278,6 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {/* EXPORTAR */}
                   <div className="flex flex-col sm:flex-row justify-between items-center bg-gray-800/40 p-4 rounded-xl border border-gray-700 gap-4">
                     <div className="flex items-center gap-3">
                        <span className="text-sm text-gray-400">Periodo:</span>
@@ -331,7 +288,6 @@ export default function AdminPage() {
                     </button>
                   </div>
 
-                  {/* TABLA PRELIMINAR */}
                   <div className="flex-1 overflow-y-auto pr-2 bg-gray-900 rounded-xl border border-gray-800">
                      <table className="w-full text-sm text-left text-gray-400">
                        <thead className="text-xs text-gray-200 uppercase bg-gray-800 sticky top-0">
@@ -340,13 +296,12 @@ export default function AdminPage() {
                        <tbody>
                          {citasHistorial.map(c => {
                            const info = getInfoServicio(c.servicio);
-                           const ganancia = info.precio - info.costo;
                            return (
                              <tr key={c.id} className="border-b border-gray-800 hover:bg-gray-800/50">
                                <td className="px-4 py-3">{c.fecha}</td>
                                <td className="px-4 py-3 text-white">{c.cliente}</td>
                                <td className="px-4 py-3">{c.servicio}</td>
-                               <td className="px-4 py-3 text-right font-mono text-green-400">+${ganancia.toLocaleString()}</td>
+                               <td className="px-4 py-3 text-right font-mono text-green-400">+${(info.precio - info.costo).toLocaleString()}</td>
                              </tr>
                            )
                          })}
