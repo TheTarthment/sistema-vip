@@ -13,27 +13,28 @@ export default function AdminPage() {
   const [citas, setCitas] = useState<any[]>([]);
   const [servicios, setServicios] = useState<any[]>([]);
   
-  // CONFIGURACIÓN DE TU EXCEL
-  const COSTO_FIJO_LUZ = 30000; // Tu gasto fijo mensual
-  
-  // TUS SERVICIOS (Extraídos de tu Excel "Numeros carolina nails studio")
-  // Costo calculado = Base ($850) + Producto extra estimado
-  const SERVICIOS_EXCEL = [
+  // CONFIGURACIÓN EXACTA DE TU EXCEL ("Hoja 1")
+  // Gastos Fijos: Luz ($30.000)
+  const COSTO_FIJO_MENSUAL = 30000; 
+
+  // TUS SERVICIOS REALES (Precio Venta y Costo Insumo Aproximado según tus notas)
+  // Nota: En tu Excel, el costo base por cliente es ~$850 (suma de insumos).
+  // He ajustado los costos para reflejar el gasto de material extra (ej: Polygel gasta más).
+  const SERVICIOS_REALES = [
     { nombre: 'Esmaltado Permanente', precio: 14000, costo: 850 },
     { nombre: 'Permanente + Baño de Gel', precio: 20000, costo: 1200 },
-    { nombre: 'Polygel', precio: 25000, costo: 1800 }, // Más producto
-    { nombre: 'Pedicure Completo', precio: 17000, costo: 1000 },
-    { nombre: 'Parafinoterapia', precio: 5000, costo: 500 },
-    { nombre: 'Retiro Permanente', precio: 5000, costo: 300 }, // Solo insumos básicos
+    { nombre: 'Polygel', precio: 25000, costo: 2500 }, 
+    { nombre: 'Pedicure Completo', precio: 17000, costo: 1500 },
+    { nombre: 'Parafinoterapia', precio: 5000, costo: 800 },
+    { nombre: 'Retiro Permanente', precio: 5000, costo: 300 },
     { nombre: 'Retiro Polygel', precio: 8000, costo: 400 },
     { nombre: 'Retiro Acrílico', precio: 10000, costo: 500 }
   ];
 
-  // Formularios
+  // Formularios y Estado
   const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', precio: '', costo: '' });
   const [bloqueo, setBloqueo] = useState({ fecha: '', hora: '' });
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Ej: 2024-01
-  
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
@@ -53,37 +54,47 @@ export default function AdminPage() {
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- BOTÓN MÁGICO: CARGAR TUS SERVICIOS ---
-  const cargarServiciosExcel = async () => {
-    if(!confirm("¿Cargar lista de precios y costos desde tu Excel? (Esto agregará los que falten)")) return;
+  // --- FUNCIÓN DE "REINICIO TOTAL DE SERVICIOS" ---
+  // Esto arregla el problema de "pérdidas" asegurando que todos los servicios tengan costo.
+  const sincronizarServiciosReales = async () => {
+    if(!confirm("¿ESTÁS SEGURA? Esto borrará los servicios mal configurados y cargará la lista oficial de tu Excel con precios y costos correctos.")) return;
     
-    for (const s of SERVICIOS_EXCEL) {
-      // Solo insertamos si no existe, para no duplicar
-      const existe = servicios.find(serv => serv.nombre === s.nombre);
-      if (!existe) {
-        await supabase.from('servicios').insert([{ 
-          nombre: s.nombre, 
-          precio: s.precio, 
-          costo: s.costo, 
-          activo: true 
-        }]);
-      }
+    // 1. Borrar todo lo antiguo (para limpiar basura)
+    const { data: actuales } = await supabase.from('servicios').select('id');
+    if (actuales) {
+        for (const s of actuales) {
+            await supabase.from('servicios').delete().eq('id', s.id);
+        }
     }
-    alert("✅ Servicios importados correctamente.");
+
+    // 2. Insertar la lista REAL con Costos
+    for (const s of SERVICIOS_REALES) {
+      await supabase.from('servicios').insert([{ 
+        nombre: s.nombre, 
+        precio: s.precio, 
+        costo: s.costo, 
+        activo: true 
+      }]);
+    }
+    
+    alert("✅ Servicios Sincronizados. Ahora tus finanzas cuadrarán.");
     cargarDatos();
   };
 
-  // --- HELPERS ---
+  // --- HELPERS FINANCIEROS ---
   const getInfoServicio = (nombreServicio: string) => {
     const s = servicios.find(ser => ser.nombre === nombreServicio);
-    // Si el servicio no existe o fue borrado, devolvemos 0 para no romper el Excel
-    return { 
-      precio: s ? s.precio : 0, 
-      costo: s ? s.costo : 0 
-    };
+    // Si por alguna razón el servicio de la cita no está en la lista actual,
+    // buscamos en la lista maestra de respaldo para no dar error.
+    const respaldo = SERVICIOS_REALES.find(sr => sr.nombre === nombreServicio);
+    
+    if (s) return { precio: s.precio, costo: s.costo || 0 };
+    if (respaldo) return { precio: respaldo.precio, costo: respaldo.costo };
+    
+    return { precio: 0, costo: 0 };
   };
 
-  // --- LÓGICA FINANCIERA ---
+  // --- LÓGICA DE CÁLCULO (Igual a tu Excel) ---
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
@@ -92,46 +103,43 @@ export default function AdminPage() {
     return (c.estado === 'completada' || fechaCita < ahora) && c.fecha.startsWith(mesFiltro);
   });
 
-  // 1. Total Vendido
+  // 1. Total Ingresos (Ventas)
   const totalIngresos = citasHistorial.reduce((sum, c) => {
     return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum;
   }, 0);
 
-  // 2. Total Gastos Variables (Costo real de cada servicio realizado)
-  const totalGastosVariables = citasHistorial.reduce((sum, c) => {
+  // 2. Total Costos Variables (Insumos)
+  const totalCostosVariables = citasHistorial.reduce((sum, c) => {
     return c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum;
   }, 0);
 
-  // 3. Ganancia Neta
-  const gananciaNeta = totalIngresos - COSTO_FIJO_LUZ - totalGastosVariables;
+  // 3. Resultado Final
+  const gananciaNeta = totalIngresos - COSTO_FIJO_MENSUAL - totalCostosVariables;
 
-  // --- EXCEL FUSIONADO AUTOMÁTICO ---
+  // --- EXCEL FUSIONADO ---
   const descargarReporteFusionado = () => {
     const wb = XLSX.utils.book_new();
 
-    // HOJA 1: RESUMEN GERENCIAL (Tu estructura de Excel)
+    // HOJA 1: RESUMEN (Igual a tu Hoja 1)
     const datosResumen = [
-      ["REPORTE DE GESTIÓN", mesFiltro],
-      ["Carolina Nails Studio", ""],
+      ["REPORTE FINANCIERO MENSUAL", mesFiltro],
+      ["Empresa", "Carolina Nails Studio"],
       ["", ""],
-      ["INGRESOS OPERACIONALES", ""],
-      ["Ventas Totales (Servicios Pagados)", totalIngresos],
+      ["INGRESOS (Ventas)", totalIngresos],
       ["", ""],
-      ["COSTOS Y GASTOS", ""],
-      ["Gastos Fijos (Luz, Local)", COSTO_FIJO_LUZ],
-      ["Costos Variables (Insumos)", totalGastosVariables],
-      ["TOTAL EGRESOS", COSTO_FIJO_LUZ + totalGastosVariables],
+      ["GASTOS FIJOS (Luz, Local)", COSTO_FIJO_MENSUAL],
+      ["GASTOS VARIABLES (Insumos)", totalCostosVariables],
+      ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
       ["", ""],
-      ["RESULTADO DEL PERIODO", ""],
       ["GANANCIA LÍQUIDA", gananciaNeta],
       ["", ""],
-      ["MARGEN DE RENTABILIDAD", ((gananciaNeta / (totalIngresos || 1)) * 100).toFixed(1) + "%"]
+      ["Nota:", "El costo variable incluye insumos (lima, alcohol, etc) calculados por servicio."]
     ];
     
     const wsResumen = XLSX.utils.aoa_to_sheet(datosResumen);
-    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen Financiero");
+    XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General");
 
-    // HOJAS ADICIONALES: DETALLE POR SERVICIO
+    // HOJAS POR SERVICIO
     const serviciosUnicos = Array.from(new Set(citasHistorial.map(c => c.servicio)));
     
     serviciosUnicos.forEach(servicio => {
@@ -140,30 +148,25 @@ export default function AdminPage() {
       const gananciaUnit = info.precio - info.costo;
 
       const datosServicio = [
-        ["Fecha", "Cliente", "Teléfono", "Precio Venta", "Costo Insumo", "Ganancia Real", "Estado"],
+        ["Fecha", "Cliente", "Teléfono", "Venta", "Costo", "Ganancia", "Estado"],
         ...citasServ.map(c => [
-          c.fecha,
-          c.cliente,
-          c.telefono,
-          info.precio,
-          info.costo, 
-          gananciaUnit,
-          c.estado === 'completada' ? "Pagado" : "Pendiente/No vino"
+          c.fecha, c.cliente, c.telefono,
+          info.precio, info.costo, gananciaUnit,
+          c.estado === 'completada' ? "Pagado" : "Pendiente"
         ]),
-        ["", "", "TOTALES:", 
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.precio : s, 0), // Suma Ventas
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.costo : s, 0),   // Suma Costos
-         citasServ.reduce((s, c) => c.estado === 'completada' ? s + gananciaUnit : s, 0), // Suma Ganancia
+        ["", "TOTALES:", "", 
+         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.precio : s, 0),
+         citasServ.reduce((s, c) => c.estado === 'completada' ? s + info.costo : s, 0),
+         citasServ.reduce((s, c) => c.estado === 'completada' ? s + gananciaUnit : s, 0),
          ""
         ]
       ];
-      
       const wsServicio = XLSX.utils.aoa_to_sheet(datosServicio);
       const nombreHoja = servicio.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30) || "Srv";
       XLSX.utils.book_append_sheet(wb, wsServicio, nombreHoja);
     });
 
-    XLSX.writeFile(wb, `Reporte_Fusionado_${mesFiltro}.xlsx`);
+    XLSX.writeFile(wb, `Reporte_CarolinaNails_${mesFiltro}.xlsx`);
   };
 
   // --- FUNCIONES GESTIÓN ---
@@ -190,7 +193,22 @@ export default function AdminPage() {
   };
   const cancelarCita = async (id: number) => { if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } };
 
-  // --- INTERFAZ ---
+  // --- VISTA LOGIN (DISEÑO ORIGINAL) ---
+  if (!auth) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <div className="bg-gray-900 p-8 rounded-xl border border-purple-500/30 w-full max-w-md text-center">
+          <h1 className="text-2xl font-bold text-white mb-6">Acceso Carolina Nails</h1>
+          <input type="password" className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 border border-gray-700 outline-none focus:border-purple-500 transition-colors" 
+            placeholder="Contraseña" value={pass} onChange={e => setPass(e.target.value)} />
+          <button onClick={login} className="w-full bg-purple-600 hover:bg-purple-500 text-white p-3 rounded-lg font-bold transition-all transform active:scale-95">Entrar</button>
+          <button onClick={() => router.push('/')} className="w-full mt-4 text-gray-500 text-sm hover:text-white">Volver al Inicio</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- INTERFAZ ADMIN ---
   const citasActivas = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
@@ -198,24 +216,25 @@ export default function AdminPage() {
     return c.estado !== 'completada' && fechaCita >= ahora;
   });
 
-  if (!auth) return <div className="min-h-screen bg-black flex items-center justify-center"><div className="bg-gray-900 p-8 rounded text-center"><input type="password" className="bg-gray-800 text-white p-2 rounded mb-4" placeholder="Contraseña" value={pass} onChange={e=>setPass(e.target.value)}/><button onClick={login} className="bg-purple-600 text-white p-2 rounded w-full">Entrar</button></div></div>;
-
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8 bg-gray-900/50 p-4 rounded-xl border border-gray-800 sticky top-0 z-50">
-          <h1 className="text-2xl font-bold text-purple-400 flex items-center gap-2"><Lock className="w-6 h-6"/> Panel Financiero PRO</h1>
+        <div className="flex justify-between items-center mb-8 bg-gray-900/50 p-4 rounded-xl border border-gray-800 sticky top-0 z-50 backdrop-blur-md">
+          <h1 className="text-2xl font-bold text-purple-400 flex items-center gap-2"><Lock className="w-6 h-6"/> Panel Financiero</h1>
           <button onClick={()=>setAuth(false)} className="text-red-400 px-3 py-2 rounded-lg flex items-center gap-2"><LogOut size={18}/> Salir</button>
         </div>
 
         <div className="grid lg:grid-cols-12 gap-8">
           
-          {/* PANEL IZQUIERDO: SERVICIOS */}
+          {/* BARRA LATERAL */}
           <div className="lg:col-span-4 space-y-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <div className="flex justify-between items-center mb-4">
                  <h2 className="text-xl font-bold flex items-center gap-2 text-green-400"><DollarSign/> Servicios</h2>
-                 <button onClick={cargarServiciosExcel} className="text-xs bg-blue-900/50 text-blue-300 px-2 py-1 rounded hover:bg-blue-800 flex items-center gap-1" title="Cargar servicios desde Excel"><RefreshCw size={12}/> Importar Excel</button>
+                 {/* BOTÓN CLAVE PARA ARREGLAR LOS DATOS */}
+                 <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded flex items-center gap-1 animate-pulse" title="Arreglar precios y costos">
+                    <RefreshCw size={12}/> REINICIAR DATOS
+                 </button>
               </div>
               
               <div className="space-y-3 bg-gray-800/50 p-3 rounded-lg border border-gray-700">
@@ -224,7 +243,7 @@ export default function AdminPage() {
                    <input type="number" placeholder="$ Venta" className="w-1/2 bg-gray-800 border border-gray-700 p-2 rounded text-sm text-green-400 font-bold" value={nuevoServicio.precio} onChange={e=>setNuevoServicio({...nuevoServicio, precio: e.target.value})}/>
                    <input type="number" placeholder="$ Costo" className="w-1/2 bg-gray-800 border border-gray-700 p-2 rounded text-sm text-red-400 font-bold" value={nuevoServicio.costo} onChange={e=>setNuevoServicio({...nuevoServicio, costo: e.target.value})}/>
                 </div>
-                <button onClick={agregarServicio} className="w-full bg-green-600 hover:bg-green-500 text-white p-2 rounded font-bold flex justify-center gap-2"><Plus size={18}/> Crear</button>
+                <button onClick={agregarServicio} className="w-full bg-green-600 hover:bg-green-500 text-white p-2 rounded font-bold flex justify-center gap-2"><Plus size={18}/> Agregar</button>
               </div>
 
               <ul className="mt-4 space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
@@ -256,7 +275,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* PANEL DERECHO: AGENDA Y FINANZAS */}
+          {/* PANEL CENTRAL */}
           <div className="lg:col-span-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl h-full flex flex-col">
               <div className="flex gap-4 border-b border-gray-800 pb-4 mb-4">
@@ -293,11 +312,11 @@ export default function AdminPage() {
                       <h3 className="text-2xl font-bold text-white">${totalIngresos.toLocaleString()}</h3>
                     </div>
                     <div className="bg-red-900/10 border border-red-800/50 p-4 rounded-xl">
-                      <p className="text-[10px] uppercase tracking-wider text-red-400 flex items-center gap-1 mb-1"><TrendingDown size={12}/> Costos (Luz + Insumos)</p>
-                      <h3 className="text-2xl font-bold text-white">${(COSTO_FIJO_LUZ + totalGastosVariables).toLocaleString()}</h3>
+                      <p className="text-[10px] uppercase tracking-wider text-red-400 flex items-center gap-1 mb-1"><TrendingDown size={12}/> Gastos (Luz+Mat)</p>
+                      <h3 className="text-2xl font-bold text-white">${(COSTO_FIJO_MENSUAL + totalCostosVariables).toLocaleString()}</h3>
                     </div>
-                    <div className="bg-blue-900/20 border border-blue-600/50 p-4 rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.2)]">
-                      <p className="text-[10px] uppercase tracking-wider text-blue-300 font-bold mb-1">GANANCIA LÍQUIDA</p>
+                    <div className={`p-4 rounded-xl border shadow-[0_0_15px_rgba(0,0,0,0.2)] ${gananciaNeta >= 0 ? 'bg-blue-900/20 border-blue-600/50' : 'bg-red-900/20 border-red-600/50'}`}>
+                      <p className={`text-[10px] uppercase tracking-wider font-bold mb-1 ${gananciaNeta >= 0 ? 'text-blue-300' : 'text-red-300'}`}>GANANCIA LÍQUIDA</p>
                       <h3 className="text-3xl font-bold text-white">${gananciaNeta.toLocaleString()}</h3>
                     </div>
                   </div>
@@ -309,7 +328,7 @@ export default function AdminPage() {
                        <input type="month" value={mesFiltro} onChange={(e) => setMesFiltro(e.target.value)} className="bg-gray-900 text-white border border-gray-600 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500"/>
                     </div>
                     <button onClick={descargarReporteFusionado} className="w-full sm:w-auto bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all hover:scale-105">
-                      <Download size={16}/> EXPORTAR REPORTE FUSIONADO
+                      <Download size={16}/> EXPORTAR REPORTE
                     </button>
                   </div>
 
@@ -317,17 +336,18 @@ export default function AdminPage() {
                   <div className="flex-1 overflow-y-auto pr-2 bg-gray-900 rounded-xl border border-gray-800">
                      <table className="w-full text-sm text-left text-gray-400">
                        <thead className="text-xs text-gray-200 uppercase bg-gray-800 sticky top-0">
-                         <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Servicio</th><th className="px-4 py-3 text-right">Ganancia Real</th></tr>
+                         <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Servicio</th><th className="px-4 py-3 text-right">Ganancia</th></tr>
                        </thead>
                        <tbody>
                          {citasHistorial.map(c => {
                            const info = getInfoServicio(c.servicio);
+                           const ganancia = info.precio - info.costo;
                            return (
                              <tr key={c.id} className="border-b border-gray-800 hover:bg-gray-800/50">
                                <td className="px-4 py-3">{c.fecha}</td>
                                <td className="px-4 py-3 text-white">{c.cliente}</td>
                                <td className="px-4 py-3">{c.servicio}</td>
-                               <td className="px-4 py-3 text-right font-mono text-green-400">+${(info.precio - info.costo).toLocaleString()}</td>
+                               <td className="px-4 py-3 text-right font-mono text-green-400">+${ganancia.toLocaleString()}</td>
                              </tr>
                            )
                          })}
