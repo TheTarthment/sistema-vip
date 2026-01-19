@@ -62,13 +62,13 @@ export default function AdminPage() {
     cargarDatos();
   };
 
-  // --- 2. VACIAR AGENDA (RESET TOTAL PARA ENTREGAR) ---
+  // --- 2. VACIAR AGENDA (CORREGIDO PARA UUID) ---
   const vaciarAgendaCompleta = async () => {
     if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero para dejar el sistema como nuevo (Caja en $0).\n\nÚsalo solo antes de entregar el sistema.")) return;
     if(!confirm("¿Confirmas por segunda vez? Se borrará todo el historial.")) return;
     
-    // Borramos todas las citas (donde el ID no sea 0, o sea, todas)
-    const { error } = await supabase.from('citas').delete().neq('id', 0);
+    // CORRECCIÓN: Usamos un UUID válido pero vacío para la comparación
+    const { error } = await supabase.from('citas').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     
     if(error) alert("Error: " + error.message);
     else {
@@ -149,7 +149,11 @@ export default function AdminPage() {
     const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
     window.open(`https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
-  const cancelarCita = async (id: number) => { if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } };
+  
+  // CORREGIDO: Aceptamos cualquier tipo de ID (UUID es string)
+  const cancelarCita = async (id: any) => { 
+    if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } 
+  };
 
   // --- LOGIN ---
   if (!auth) {
