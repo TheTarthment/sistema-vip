@@ -13,10 +13,10 @@ export default function AdminPage() {
   const [citas, setCitas] = useState<any[]>([]);
   const [servicios, setServicios] = useState<any[]>([]);
   
-  // CONFIGURACIÓN EXACTA DE TU EXCEL
-  const COSTO_FIJO_MENSUAL = 30000; 
+  // --- CONFIGURACIÓN FINANCIERA (BASE EXCEL) ---
+  const COSTO_FIJO_MENSUAL = 30000; // Luz y gastos fijos
 
-  // TUS SERVICIOS REALES (Respaldo)
+  // LISTA MAESTRA DE SERVICIOS (Precios Venta y Costos Insumos Estimados)
   const SERVICIOS_REALES = [
     { nombre: 'Esmaltado Permanente', precio: 14000, costo: 850 },
     { nombre: 'Permanente + Baño de Gel', precio: 20000, costo: 1200 },
@@ -30,7 +30,7 @@ export default function AdminPage() {
 
   const [nuevoServicio, setNuevoServicio] = useState({ nombre: '', precio: '', costo: '' });
   const [bloqueo, setBloqueo] = useState({ fecha: '', hora: '' });
-  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7));
+  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Ej: 2026-01
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
@@ -50,29 +50,40 @@ export default function AdminPage() {
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- 1. REINICIAR SERVICIOS (Precios Correctos) ---
+  // --- 1. FUNCIÓN: REINICIAR SERVICIOS (Arregla precios y costos) ---
   const sincronizarServiciosReales = async () => {
     if(!confirm("¿Cargar la lista OFICIAL de servicios y precios del Excel?")) return;
+    
+    // Borramos los actuales
     const { data: actuales } = await supabase.from('servicios').select('id');
-    if (actuales) { for (const s of actuales) await supabase.from('servicios').delete().eq('id', s.id); }
+    if (actuales) { 
+        for (const s of actuales) await supabase.from('servicios').delete().eq('id', s.id); 
+    }
+    
+    // Insertamos los oficiales con costos correctos
     for (const s of SERVICIOS_REALES) {
-      await supabase.from('servicios').insert([{ nombre: s.nombre, precio: s.precio, costo: s.costo, activo: true }]);
+      await supabase.from('servicios').insert([{ 
+        nombre: s.nombre, 
+        precio: s.precio, 
+        costo: s.costo, 
+        activo: true 
+      }]);
     }
     alert("✅ Servicios Configurados Correctamente.");
     cargarDatos();
   };
 
-  // --- 2. VACIAR AGENDA (CORREGIDO PARA UUID) ---
+  // --- 2. FUNCIÓN: VACIAR AGENDA (Reset de Fábrica - CORREGIDO UUID) ---
   const vaciarAgendaCompleta = async () => {
-    if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero para dejar el sistema como nuevo (Caja en $0).\n\nÚsalo solo antes de entregar el sistema.")) return;
-    if(!confirm("¿Confirmas por segunda vez? Se borrará todo el historial.")) return;
+    if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero para dejar la caja en $0.\n\nÚsalo solo antes de entregar el sistema.")) return;
+    if(!confirm("Confirmación final: Se borrará todo.")) return;
     
-    // CORRECCIÓN: Usamos un UUID válido pero vacío para la comparación
+    // Solución al error UUID: Usamos un UUID válido vacío para comparar
     const { error } = await supabase.from('citas').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     
     if(error) alert("Error: " + error.message);
     else {
-      alert("✨ Sistema Limpio y Listo para Entregar. Caja en $0.");
+      alert("✨ Sistema Limpio. Caja en $0. Listo para trabajar.");
       cargarDatos();
     }
   };
@@ -81,53 +92,71 @@ export default function AdminPage() {
   const getInfoServicio = (nombreServicio: string) => {
     const s = servicios.find(ser => ser.nombre === nombreServicio);
     const respaldo = SERVICIOS_REALES.find(sr => sr.nombre === nombreServicio);
+    
     if (s) return { precio: s.precio, costo: s.costo || 0 };
     if (respaldo) return { precio: respaldo.precio, costo: respaldo.costo };
+    
     return { precio: 0, costo: 0 };
   };
 
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
+    
+    // Filtro de limpieza: Solo consideramos servicios válidos
     const servicioEsValido = servicios.some(s => s.nombre === c.servicio);
-    if (!servicioEsValido) return false; 
+    if (!servicioEsValido && servicios.length > 0) return false; 
+
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     const ahora = new Date();
+    // Filtro mes y estado
     return (c.estado === 'completada' || fechaCita < ahora) && c.fecha.startsWith(mesFiltro);
   });
 
+  // Cálculos Totales
   const totalIngresos = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum, 0);
   const totalCostosVariables = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum, 0);
   const gananciaNeta = totalIngresos - COSTO_FIJO_MENSUAL - totalCostosVariables;
 
-  // --- EXCEL ---
+  // --- EXPORTAR EXCEL FUSIONADO ---
   const descargarReporteFusionado = () => {
     const wb = XLSX.utils.book_new();
+
+    // HOJA 1: RESUMEN
     const datosResumen = [
       ["REPORTE FINANCIERO MENSUAL", mesFiltro], ["Carolina Nails Studio", ""], ["", ""],
-      ["INGRESOS", totalIngresos], ["", ""],
-      ["GASTOS FIJOS", COSTO_FIJO_MENSUAL], ["GASTOS VARIABLES", totalCostosVariables], ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
-      ["", ""], ["GANANCIA LÍQUIDA", gananciaNeta]
+      ["INGRESOS (Ventas)", totalIngresos], ["", ""],
+      ["GASTOS FIJOS (Luz)", COSTO_FIJO_MENSUAL], 
+      ["GASTOS VARIABLES (Insumos)", totalCostosVariables], 
+      ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
+      ["", ""], 
+      ["GANANCIA LÍQUIDA", gananciaNeta]
     ];
     const wsResumen = XLSX.utils.aoa_to_sheet(datosResumen);
     XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General");
 
+    // HOJAS POR SERVICIO
     const serviciosUnicos = Array.from(new Set(citasHistorial.map(c => c.servicio)));
     serviciosUnicos.forEach(servicio => {
       const citasServ = citasHistorial.filter(c => c.servicio === servicio);
       const info = getInfoServicio(servicio);
+      const gananciaUnit = info.precio - info.costo;
+
       const datosServicio = [
         ["Fecha", "Cliente", "Teléfono", "Venta", "Costo", "Ganancia", "Estado"],
         ...citasServ.map(c => [
-          c.fecha, c.cliente, c.telefono, info.precio, info.costo, info.precio - info.costo, c.estado === 'completada' ? "Pagado" : "Pendiente"
+          c.fecha, c.cliente, c.telefono, info.precio, info.costo, gananciaUnit, c.estado === 'completada' ? "Pagado" : "Pendiente"
         ])
       ];
       const wsServicio = XLSX.utils.aoa_to_sheet(datosServicio);
-      XLSX.utils.book_append_sheet(wb, wsServicio, servicio.substring(0, 30));
+      // Nombre de hoja limpio (max 30 chars)
+      const nombreHoja = servicio.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30) || "Servicio";
+      XLSX.utils.book_append_sheet(wb, wsServicio, nombreHoja);
     });
+
     XLSX.writeFile(wb, `Reporte_CarolinaNails_${mesFiltro}.xlsx`);
   };
 
-  // --- GESTIÓN ---
+  // --- GESTIÓN MANUAL ---
   const agregarServicio = async () => {
     if (!nuevoServicio.nombre || !nuevoServicio.precio || !nuevoServicio.costo) return alert("Faltan datos");
     await supabase.from('servicios').insert([{ nombre: nuevoServicio.nombre, precio: parseInt(nuevoServicio.precio), costo: parseInt(nuevoServicio.costo), activo: true }]);
@@ -135,23 +164,32 @@ export default function AdminPage() {
     cargarDatos();
   };
   const borrarServicio = async (id: string) => { if(confirm("¿Borrar?")) await supabase.from('servicios').delete().eq('id', id); cargarDatos(); };
+  
   const bloquearHorario = async () => {
     if (!bloqueo.fecha || !bloqueo.hora) return alert("Faltan datos");
     await supabase.from('citas').insert([{ cliente: '⛔ BLOQUEO', fecha: bloqueo.fecha, hora: bloqueo.hora, servicio: 'BLOQUEADO', telefono: '-', email: '-', estado: 'bloqueado' }]);
     alert("Bloqueado"); setBloqueo({ fecha: '', hora: '' }); cargarDatos(); 
   };
+
+  // --- TERMINAR Y WHATSAPP ---
   const terminarCitaYAgradecer = async (cita: any) => {
     if(!cita.telefono) return alert("Sin fono");
+    // 1. Guardar en historial
     await supabase.from('citas').update({ estado: 'completada' }).eq('id', cita.id);
     await cargarDatos();
-    let fono = cita.telefono.replace(/\D/g, ''); if(fono.length === 8) fono = '569' + fono; if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
+    
+    // 2. Abrir WhatsApp
+    let fono = cita.telefono.replace(/\D/g, ''); 
+    if(fono.length === 8) fono = '569' + fono; 
+    if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
+    
     const emojis = { corazon: '\uD83D\uDC96', brillos: '\u2728', unias: '\uD83D\uDC85', feliz: '\uD83E\uDD70' };
     const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
+    
     window.open(`https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
-  
-  // CORREGIDO: Aceptamos cualquier tipo de ID (UUID es string)
-  const cancelarCita = async (id: any) => { 
+
+  const cancelarCita = async (id: any) => { // 'any' para aceptar UUID string
     if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } 
   };
 
@@ -190,13 +228,13 @@ export default function AdminPage() {
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <h2 className="text-xl font-bold flex items-center gap-2 text-green-400 mb-4"><DollarSign/> Servicios</h2>
               
-              {/* ZONA DE RESET */}
+              {/* BOTONES DE CONTROL (RESET) */}
               <div className="grid grid-cols-2 gap-2 mb-6">
-                <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-900/40 hover:bg-blue-800 text-blue-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-blue-800" title="Recargar precios del Excel">
-                    <RefreshCw size={14}/> <span>Reiniciar Servicios</span>
+                <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-900/40 hover:bg-blue-800 text-blue-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-blue-800" title="Cargar precios y costos del Excel">
+                    <RefreshCw size={14}/> <span>Cargar Oficiales</span>
                 </button>
-                <button onClick={vaciarAgendaCompleta} className="text-xs bg-red-900/40 hover:bg-red-800 text-red-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-red-800" title="Borrar todas las citas">
-                    <AlertTriangle size={14}/> <span>VACIAR AGENDA</span>
+                <button onClick={vaciarAgendaCompleta} className="text-xs bg-red-900/40 hover:bg-red-800 text-red-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-red-800" title="Dejar caja en $0">
+                    <AlertTriangle size={14}/> <span>RESET CAJA</span>
                 </button>
               </div>
 
