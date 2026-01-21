@@ -3,78 +3,58 @@ import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { tipo, cliente, email, fecha, hora, servicio } = body;
+    const data = await request.json();
+    const { cliente, fecha, hora, servicio, email, telefono } = data;
 
-    // Configuración del Transportador (Gmail)
+    // --- AQUÍ ES DONDE CAMBIAS EL REMITENTE ---
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_PASS,
-      },
+        user: 'carolinanails2026@gmail.com', // <--- TU NUEVO CORREO
+        pass: 'rnhr xvza uvce nebt'          // <--- PEGA AQUÍ LA CLAVE DE 16 LETRAS DE CAROLINANAILS (NO LA DE MARTIN)
+      }
     });
+    // -------------------------------------------
 
-    let asunto = '';
-    let htmlContent = '';
-
-    // Diseños de Correo
-    if (tipo === 'confirmacion') {
-      asunto = `✅ Reserva Confirmada: ${servicio}`;
-      htmlContent = `
-        <div style="font-family: Arial, color: #333; padding: 20px;">
-          <h2 style="color: #6d28d9;">¡Hola ${cliente}! 👋</h2>
-          <p>Tu cita en <strong>Carolina Nails Studio</strong> ha sido agendada.</p>
-          <hr/>
-          <p><strong>💅 Servicio:</strong> ${servicio}</p>
-          <p><strong>📅 Fecha:</strong> ${fecha}</p>
-          <p><strong>⏰ Hora:</strong> ${hora}</p>
-          <br/>
-          <p style="font-size: 12px; color: #888;">Te esperamos.</p>
-        </div>
-      `;
-    } else if (tipo === 'cancelacion') {
-      asunto = `❌ Cita Cancelada: ${servicio}`;
-      htmlContent = `
-        <div style="font-family: Arial, color: #333; padding: 20px;">
-          <h2 style="color: #e11d48;">Cita Cancelada</h2>
-          <p>Estimado/a ${cliente}, la cita del <strong>${fecha}</strong> a las <strong>${hora}</strong> ha sido eliminada.</p>
-        </div>
-      `;
-    }
-
-    // 1. Enviar al Cliente (Si hay email)
-    if (email) {
-      await transporter.sendMail({
-        from: `"Carolina Nails Studio" <${process.env.GMAIL_USER}>`,
-        to: email,
-        subject: asunto,
-        html: htmlContent,
-      });
-    }
-
-    // 2. Enviar a la Dueña (Siempre)
-    // CAMBIA AQUÍ 'tucorreo@gmail.com' POR EL EMAIL REAL DE LA DUEÑA
-    const correoDuena = 'tucorreo@gmail.com'; 
-
-    await transporter.sendMail({
-      from: `"Sistema Notificaciones" <${process.env.GMAIL_USER}>`,
-      to: correoDuena,
-      subject: `[ADMIN] ${asunto}`,
+    // Configuración del correo que le llega al cliente
+    const mailOptions = {
+      from: '"Carolina Nails Studio" <carolinanails2026@gmail.com>', // Nombre visible
+      to: email, // Se le envía al cliente
+      subject: '✅ Confirmación de Reserva - Carolina Nails Studio',
       html: `
-        <div style="background: #f3f4f6; padding: 20px; border-left: 4px solid #6d28d9; font-family: sans-serif;">
-          <h3>🔔 Actividad en Carolina Nails</h3>
-          <p><strong>Cliente:</strong> ${cliente}</p>
-          <p><strong>Email:</strong> ${email || 'No proporcionado'}</p>
-          <p><strong>Detalle:</strong> ${servicio} - ${fecha} ${hora}</p>
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+          <div style="background-color: #000; padding: 20px; text-align: center;">
+            <h1 style="color: #fff; margin: 0;">Reserva Confirmada</h1>
+          </div>
+          <div style="padding: 20px;">
+            <p>Hola <strong>${cliente}</strong>,</p>
+            <p>¡Tu cita ha sido agendada con éxito! Aquí están los detalles:</p>
+            
+            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+              <p><strong>📅 Fecha:</strong> ${fecha}</p>
+              <p><strong>⏰ Hora:</strong> ${hora}</p>
+              <p><strong>💅 Servicio:</strong> ${servicio}</p>
+            </div>
+
+            <p style="font-size: 0.9em; color: #666;">
+              📍 <strong>Ubicación:</strong> [Tu Dirección Aquí]<br>
+              📞 <strong>Contacto:</strong> +56 9 [Tu Número]
+            </p>
+          </div>
+          <div style="background-color: #f4f4f4; padding: 15px; text-align: center; font-size: 0.8em; color: #888;">
+            <p>Si necesitas cancelar o reagendar, por favor contáctanos con anticipación.</p>
+            <p>© 2026 Carolina Nails Studio</p>
+          </div>
         </div>
-      `,
-    });
+      `
+    };
 
-    return NextResponse.json({ success: true });
+    // Enviar el correo
+    await transporter.sendMail(mailOptions);
 
+    return NextResponse.json({ message: 'Correo enviado exitosamente' }, { status: 200 });
   } catch (error) {
-    console.error("❌ Error enviando correo:", error);
-    return NextResponse.json({ error: "Error enviando email" }, { status: 500 });
+    console.error('Error enviando correo:', error);
+    return NextResponse.json({ error: 'Error al enviar el correo' }, { status: 500 });
   }
 }
