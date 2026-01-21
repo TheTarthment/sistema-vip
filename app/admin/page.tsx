@@ -16,7 +16,7 @@ export default function AdminPage() {
   // --- CONFIGURACIÓN FINANCIERA (BASE EXCEL) ---
   const COSTO_FIJO_MENSUAL = 30000; // Luz y gastos fijos
 
-  // LISTA MAESTRA DE SERVICIOS (Precios Venta y Costos Insumos Estimados)
+  // LISTA MAESTRA DE SERVICIOS
   const SERVICIOS_REALES = [
     { nombre: 'Esmaltado Permanente', precio: 14000, costo: 850 },
     { nombre: 'Permanente + Baño de Gel', precio: 20000, costo: 1200 },
@@ -34,7 +34,9 @@ export default function AdminPage() {
   const [vista, setVista] = useState<'activas' | 'historial'>('activas');
   const router = useRouter();
 
-  const PASSWORD_SECRETA = "admin123";
+  // --- 🔒 CAMBIO DE CONTRASEÑA ---
+  const PASSWORD_SECRETA = "Emily123."; // <--- NUEVA CONTRASEÑA
+  // -------------------------------
 
   const login = () => {
     if (pass === PASSWORD_SECRETA) setAuth(true);
@@ -50,35 +52,24 @@ export default function AdminPage() {
 
   useEffect(() => { if (auth) cargarDatos(); }, [auth]);
 
-  // --- 1. FUNCIÓN: REINICIAR SERVICIOS (Arregla precios y costos) ---
+  // --- 1. FUNCIÓN: REINICIAR SERVICIOS ---
   const sincronizarServiciosReales = async () => {
     if(!confirm("¿Cargar la lista OFICIAL de servicios y precios del Excel?")) return;
-    
-    // Borramos los actuales
     const { data: actuales } = await supabase.from('servicios').select('id');
-    if (actuales) { 
-        for (const s of actuales) await supabase.from('servicios').delete().eq('id', s.id); 
-    }
-    
-    // Insertamos los oficiales con costos correctos
+    if (actuales) { for (const s of actuales) await supabase.from('servicios').delete().eq('id', s.id); }
     for (const s of SERVICIOS_REALES) {
-      await supabase.from('servicios').insert([{ 
-        nombre: s.nombre, 
-        precio: s.precio, 
-        costo: s.costo, 
-        activo: true 
-      }]);
+      await supabase.from('servicios').insert([{ nombre: s.nombre, precio: s.precio, costo: s.costo, activo: true }]);
     }
     alert("✅ Servicios Configurados Correctamente.");
     cargarDatos();
   };
 
-  // --- 2. FUNCIÓN: VACIAR AGENDA (Reset de Fábrica - CORREGIDO UUID) ---
+  // --- 2. FUNCIÓN: VACIAR AGENDA (Reset de Fábrica) ---
   const vaciarAgendaCompleta = async () => {
-    if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero para dejar la caja en $0.\n\nÚsalo solo antes de entregar el sistema.")) return;
+    if(!confirm("⚠️ ¿ESTÁS SEGURA? ⚠️\n\nEsto borrará TODAS las citas y el historial de dinero.\n\nÚsalo solo antes de entregar el sistema.")) return;
     if(!confirm("Confirmación final: Se borrará todo.")) return;
     
-    // Solución al error UUID: Usamos un UUID válido vacío para comparar
+    // Solución al error UUID
     const { error } = await supabase.from('citas').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     
     if(error) alert("Error: " + error.message);
@@ -92,27 +83,20 @@ export default function AdminPage() {
   const getInfoServicio = (nombreServicio: string) => {
     const s = servicios.find(ser => ser.nombre === nombreServicio);
     const respaldo = SERVICIOS_REALES.find(sr => sr.nombre === nombreServicio);
-    
     if (s) return { precio: s.precio, costo: s.costo || 0 };
     if (respaldo) return { precio: respaldo.precio, costo: respaldo.costo };
-    
     return { precio: 0, costo: 0 };
   };
 
   const citasHistorial = citas.filter(c => {
     if (c.servicio === 'BLOQUEADO') return false;
-    
-    // Filtro de limpieza: Solo consideramos servicios válidos
     const servicioEsValido = servicios.some(s => s.nombre === c.servicio);
     if (!servicioEsValido && servicios.length > 0) return false; 
-
     const fechaCita = new Date(`${c.fecha}T${c.hora}`);
     const ahora = new Date();
-    // Filtro mes y estado
     return (c.estado === 'completada' || fechaCita < ahora) && c.fecha.startsWith(mesFiltro);
   });
 
-  // Cálculos Totales
   const totalIngresos = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).precio : sum, 0);
   const totalCostosVariables = citasHistorial.reduce((sum, c) => c.estado === 'completada' ? sum + getInfoServicio(c.servicio).costo : sum, 0);
   const gananciaNeta = totalIngresos - COSTO_FIJO_MENSUAL - totalCostosVariables;
@@ -120,27 +104,22 @@ export default function AdminPage() {
   // --- EXPORTAR EXCEL FUSIONADO ---
   const descargarReporteFusionado = () => {
     const wb = XLSX.utils.book_new();
-
-    // HOJA 1: RESUMEN
     const datosResumen = [
       ["REPORTE FINANCIERO MENSUAL", mesFiltro], ["Carolina Nails Studio", ""], ["", ""],
       ["INGRESOS (Ventas)", totalIngresos], ["", ""],
       ["GASTOS FIJOS (Luz)", COSTO_FIJO_MENSUAL], 
       ["GASTOS VARIABLES (Insumos)", totalCostosVariables], 
       ["TOTAL GASTOS", COSTO_FIJO_MENSUAL + totalCostosVariables],
-      ["", ""], 
-      ["GANANCIA LÍQUIDA", gananciaNeta]
+      ["", ""], ["GANANCIA LÍQUIDA", gananciaNeta]
     ];
     const wsResumen = XLSX.utils.aoa_to_sheet(datosResumen);
     XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General");
 
-    // HOJAS POR SERVICIO
     const serviciosUnicos = Array.from(new Set(citasHistorial.map(c => c.servicio)));
     serviciosUnicos.forEach(servicio => {
       const citasServ = citasHistorial.filter(c => c.servicio === servicio);
       const info = getInfoServicio(servicio);
       const gananciaUnit = info.precio - info.costo;
-
       const datosServicio = [
         ["Fecha", "Cliente", "Teléfono", "Venta", "Costo", "Ganancia", "Estado"],
         ...citasServ.map(c => [
@@ -148,11 +127,9 @@ export default function AdminPage() {
         ])
       ];
       const wsServicio = XLSX.utils.aoa_to_sheet(datosServicio);
-      // Nombre de hoja limpio (max 30 chars)
       const nombreHoja = servicio.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30) || "Servicio";
       XLSX.utils.book_append_sheet(wb, wsServicio, nombreHoja);
     });
-
     XLSX.writeFile(wb, `Reporte_CarolinaNails_${mesFiltro}.xlsx`);
   };
 
@@ -171,27 +148,21 @@ export default function AdminPage() {
     alert("Bloqueado"); setBloqueo({ fecha: '', hora: '' }); cargarDatos(); 
   };
 
-  // --- TERMINAR Y WHATSAPP ---
   const terminarCitaYAgradecer = async (cita: any) => {
     if(!cita.telefono) return alert("Sin fono");
-    // 1. Guardar en historial
     await supabase.from('citas').update({ estado: 'completada' }).eq('id', cita.id);
     await cargarDatos();
     
-    // 2. Abrir WhatsApp
     let fono = cita.telefono.replace(/\D/g, ''); 
     if(fono.length === 8) fono = '569' + fono; 
     if(fono.length === 9 && fono.startsWith('9')) fono = '56' + fono;
     
     const emojis = { corazon: '\uD83D\uDC96', brillos: '\u2728', unias: '\uD83D\uDC85', feliz: '\uD83E\uDD70' };
     const mensaje = `¡Hola ${cita.cliente}! ${emojis.corazon}${emojis.brillos}\n\nMuchas gracias por visitarnos hoy en Carolina Nails Studio ${emojis.unias}.\nFue un gusto atenderte. ¡Espero que ames tus uñas tanto como yo!\n\nNos vemos en la próxima. ${emojis.feliz}`;
-    
     window.open(`https://wa.me/${fono}?text=${encodeURIComponent(mensaje)}`, '_blank');
   };
 
-  const cancelarCita = async (id: any) => { // 'any' para aceptar UUID string
-    if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } 
-  };
+  const cancelarCita = async (id: any) => { if(confirm("¿Eliminar?")) { await supabase.from('citas').delete().eq('id', id); cargarDatos(); } };
 
   // --- LOGIN ---
   if (!auth) {
@@ -223,12 +194,9 @@ export default function AdminPage() {
         </div>
 
         <div className="grid lg:grid-cols-12 gap-8">
-          
           <div className="lg:col-span-4 space-y-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <h2 className="text-xl font-bold flex items-center gap-2 text-green-400 mb-4"><DollarSign/> Servicios</h2>
-              
-              {/* BOTONES DE CONTROL (RESET) */}
               <div className="grid grid-cols-2 gap-2 mb-6">
                 <button onClick={sincronizarServiciosReales} className="text-xs bg-blue-900/40 hover:bg-blue-800 text-blue-200 px-2 py-2 rounded flex flex-col items-center gap-1 text-center border border-blue-800" title="Cargar precios y costos del Excel">
                     <RefreshCw size={14}/> <span>Cargar Oficiales</span>
@@ -237,7 +205,6 @@ export default function AdminPage() {
                     <AlertTriangle size={14}/> <span>RESET CAJA</span>
                 </button>
               </div>
-
               <div className="space-y-3 bg-gray-800/50 p-3 rounded-lg border border-gray-700">
                 <input placeholder="Nombre Nuevo" className="w-full bg-gray-800 border border-gray-700 p-2 rounded text-sm" value={nuevoServicio.nombre} onChange={e=>setNuevoServicio({...nuevoServicio, nombre: e.target.value})}/>
                 <div className="flex gap-2">
@@ -246,7 +213,6 @@ export default function AdminPage() {
                 </div>
                 <button onClick={agregarServicio} className="w-full bg-green-600 hover:bg-green-500 text-white p-2 rounded font-bold flex justify-center gap-2"><Plus size={18}/> Agregar</button>
               </div>
-
               <ul className="mt-4 space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                 {servicios.map(s => (
                   <li key={s.id} className="flex justify-between items-center bg-gray-800/30 p-2 rounded border border-gray-700/30 text-xs hover:bg-gray-800 transition-colors">
@@ -262,7 +228,6 @@ export default function AdminPage() {
                 ))}
               </ul>
             </div>
-
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-red-400"><Lock/> Bloqueo</h2>
               <div className="space-y-3">
@@ -275,14 +240,12 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
-
           <div className="lg:col-span-8">
             <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-xl h-full flex flex-col">
               <div className="flex gap-4 border-b border-gray-800 pb-4 mb-4">
                 <button onClick={() => setVista('activas')} className={`px-4 py-2 rounded-lg text-sm font-bold ${vista === 'activas' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}>Agenda Activa</button>
                 <button onClick={() => setVista('historial')} className={`px-4 py-2 rounded-lg text-sm font-bold ${vista === 'historial' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}`}>Reportes y Caja</button>
               </div>
-
               {vista === 'activas' && (
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2 max-h-[800px]">
                    <h3 className="text-gray-400 text-sm flex items-center gap-2"><Calendar size={16}/> {citasActivas.length} Citas Pendientes</h3>
@@ -302,7 +265,6 @@ export default function AdminPage() {
                    {citasActivas.length === 0 && <p className="text-center text-gray-600 py-10 border-2 border-dashed border-gray-800 rounded-xl">Sin citas pendientes hoy.</p>}
                 </div>
               )}
-
               {vista === 'historial' && (
                 <div className="flex-1 flex flex-col space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -319,7 +281,6 @@ export default function AdminPage() {
                       <h3 className="text-3xl font-bold text-white">${gananciaNeta.toLocaleString()}</h3>
                     </div>
                   </div>
-
                   <div className="flex flex-col sm:flex-row justify-between items-center bg-gray-800/40 p-4 rounded-xl border border-gray-700 gap-4">
                     <div className="flex items-center gap-3">
                        <span className="text-sm text-gray-400">Periodo:</span>
@@ -329,7 +290,6 @@ export default function AdminPage() {
                       <Download size={16}/> EXPORTAR REPORTE
                     </button>
                   </div>
-
                   <div className="flex-1 overflow-y-auto pr-2 bg-gray-900 rounded-xl border border-gray-800">
                      <table className="w-full text-sm text-left text-gray-400">
                        <thead className="text-xs text-gray-200 uppercase bg-gray-800 sticky top-0">
