@@ -10,8 +10,8 @@ export async function POST(request: Request) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: 'carolinanails2026@gmail.com', // <--- TU NUEVO CORREO
-        pass: 'rnhr xvza uvce nebt'          // <--- PEGA AQUÍ LA CLAVE DE 16 LETRAS DE CAROLINANAILS (NO LA DE MARTIN)
+        user: 'caronailsestudioculenar@gmail.com', // <--- TU NUEVO CORREO
+        pass: 'mlsg nhns sytt qxxy'          // <--- PEGA AQUÍ LA CLAVE DE 16 LETRAS DE CAROLINANAILS (NO LA DE MARTIN)
       }
     });
     // -------------------------------------------
