@@ -1,5 +1,5 @@
 {
-  "name": "gestion-vip",
+  "name": "sistema-reservas",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -16,7 +16,7 @@
     "nodemailer": "^7.0.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -28,5 +28,8 @@
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
